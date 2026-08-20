@@ -161,7 +161,11 @@ function parseRoutine(text){
 }
 
 /* ---------- navegacion ---------- */
-let currentTab = 'inicio';
+let currentTab = state.currentTab || 'inicio';
+let sessionView = state.sessionView || 'activa';
+
+function setTab(id){ currentTab = id; state.currentTab = id; saveState(); render(); }
+function setSessionView(v){ sessionView = v; state.sessionView = v; saveState(); }
 const TABS = [
   {id:'inicio', label:'Inicio', icon:'home'},
   {id:'sesion', label:'Sesión', icon:'session'},
@@ -174,7 +178,7 @@ function renderTabbar(){
   t.innerHTML = '';
   TABS.forEach(tb=>{
     const btn = el(`<button class="${tb.id===currentTab?'active':''}">${icon(tb.icon)}<span style="font-size:11px">${tb.label}</span></button>`);
-    btn.onclick = ()=>{ currentTab = tb.id; render(); };
+    btn.onclick = ()=>{ setTab(tb.id); };
     t.appendChild(btn);
   });
 }
@@ -217,7 +221,7 @@ function cargarRutina(){
   const reemplazando = !!state.routine;
   state.routine = parsed;
   saveState();
-  if(reemplazando){ currentTab='inicio'; }
+  if(reemplazando){ currentTab='inicio'; state.currentTab='inicio'; }
   render();
 }
 
@@ -328,7 +332,7 @@ function saltarDia(){
 }
 
 /* ---------- pantalla: sesión ---------- */
-let sessionView = 'activa'; // activa | sustituir | resumen
+// sessionView (activa | sustituir | resumen) ya declarado arriba, junto a currentTab
 let sustEjIdx = null;
 let holdTimeout = null;
 let holdFired = false;
@@ -345,10 +349,8 @@ function empezarSesion(dayIdx){
       sets: seedSets(e)
     }))
   };
-  sessionView = 'activa';
-  saveState();
-  currentTab = 'sesion';
-  render();
+  setSessionView('activa');
+  setTab('sesion');
 }
 function seedSets(e){
   const last = state.lastByExercise[e.nombre];
@@ -433,7 +435,7 @@ function screenSesion(){
 
   const head = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px"><h2>${ej.nombre}</h2></div>`);
   const btnCambiar = el(`<button class="btn" style="font-size:12px;padding:5px 10px">Cambiar</button>`);
-  btnCambiar.onclick = ()=>{ sustEjIdx = ses.focusIdx; sessionView='sustituir'; render(); };
+  btnCambiar.onclick = ()=>{ sustEjIdx = ses.focusIdx; setSessionView('sustituir'); render(); };
   head.appendChild(btnCambiar);
   wrap.appendChild(head);
   if(ej.repsMin){
@@ -592,7 +594,7 @@ function screenSustituir(){
   const ej = ses.exercises[sustEjIdx];
   const wrap = document.createElement('div');
   const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
-  back.onclick = ()=>{ sessionView='activa'; render(); };
+  back.onclick = ()=>{ setSessionView('activa'); render(); };
   wrap.appendChild(back);
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:4px">Sustituir</p>`));
   wrap.appendChild(el(`<h2 style="margin-bottom:16px">${ej.nombre}</h2>`));
@@ -601,7 +603,7 @@ function screenSustituir(){
       <div><p style="font-weight:600;font-size:14px">${alt.nombre}</p><p class="muted" style="font-size:12px">${alt.detalle||''}</p></div>
     </div>`);
     const useBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">Usar</button>`);
-    useBtn.onclick = ()=>{ ej.nombre = alt.nombre; sessionView='activa'; saveState(); render(); };
+    useBtn.onclick = ()=>{ ej.nombre = alt.nombre; setSessionView('activa'); render(); };
     card.appendChild(useBtn);
     wrap.appendChild(card);
   });
@@ -640,7 +642,7 @@ function finalizarSesion(){
 
   state.lastResumen = record;
   state.activeSession = null;
-  sessionView = 'resumen';
+  setSessionView('resumen');
   saveState();
   render();
 }
@@ -680,7 +682,7 @@ function screenResumen(){
   }
 
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:16px">Volver al inicio</button>`);
-  btn.onclick = ()=>{ sessionView='activa'; currentTab='inicio'; render(); };
+  btn.onclick = ()=>{ setSessionView('activa'); setTab('inicio'); };
   wrap.appendChild(btn);
   return wrap;
 }
