@@ -221,25 +221,70 @@ function cargarRutina(){
   render();
 }
 
+let editDayIdx = null;
+let dayHoldTimeout = null;
+
+function diaToText(day, idx){
+  let out = `DIA ${idx+1}: ${day.name}\n`;
+  day.exercises.forEach(e=>{
+    out += `${e.nombre} | descanso ${e.descanso} | calentamiento ${e.calentamiento||0} | aproximacion ${e.aproximacion||0} | series ${e.series} | reps ${e.repsMin||8}-${e.repsMax||12}`;
+    if(e.alternativas && e.alternativas.length) out += ` | alt: ${e.alternativas.map(a=>a.nombre).join(', ')}`;
+    out += '\n';
+  });
+  return out;
+}
+
 /* ---------- pantalla: rutina (ver actual / cargar nueva) ---------- */
 function screenRutina(){
+  if(editDayIdx!==null) return screenEditarDia(editDayIdx);
+
   const wrap = document.createElement('div');
-  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Rutina actual</h2>`));
+  wrap.appendChild(el(`<h2 style="margin-bottom:4px">Rutina actual</h2>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:12px">Mantené presionado un día para editarlo.</p>`));
+
   state.routine.days.forEach((d,i)=>{
-    const card = el(`<div class="card" style="margin-bottom:10px"></div>`);
-    card.appendChild(el(`<p style="font-weight:600;margin-bottom:6px">${d.name}</p>`));
-    d.exercises.forEach(e=>{
-      card.appendChild(el(`<p class="muted" style="font-size:13px;margin-bottom:2px">${e.nombre} — ${e.series} series${e.repsMin?` de ${e.repsMin}-${e.repsMax} reps`:''}</p>`));
-    });
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '10px';
+    card.innerHTML = `<p style="font-weight:600;margin-bottom:6px">${d.name}</p>` +
+      d.exercises.map(e=>`<p class="muted" style="font-size:13px;margin-bottom:2px">${e.nombre} — ${e.series} series${e.repsMin?` de ${e.repsMin}-${e.repsMax} reps`:''}</p>`).join('');
+
+    let held = false;
+    const startHold = ()=>{ held=false; dayHoldTimeout = setTimeout(()=>{ held=true; editDayIdx=i; render(); },550); };
+    const cancelHold = ()=>{ clearTimeout(dayHoldTimeout); };
+    card.onmousedown = startHold; card.onmouseup = cancelHold; card.onmouseleave = cancelHold;
+    card.ontouchstart = startHold; card.ontouchend = cancelHold;
     wrap.appendChild(card);
   });
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:20px 0 8px">Cargar una rutina nueva</p>`));
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Esto reemplaza la rutina actual. Tu historial de sesiones no se pierde.</p>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:20px 0 8px">Cargar una rutina nueva completa</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Esto reemplaza todos los días. Tu historial de sesiones no se pierde.</p>`));
   wrap.appendChild(el(`<textarea id="routinepaste" placeholder="DIA 1: Push
 Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press banca en Smith, Press con mancuernas"></textarea>`));
-  const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina</button>`);
-  btn.onclick = ()=>{ if(confirm('¿Reemplazar la rutina actual por esta nueva?')){ cargarRutina(); } };
+  const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina completa</button>`);
+  btn.onclick = ()=>{ if(confirm('¿Reemplazar toda la rutina actual por esta nueva?')){ cargarRutina(); } };
+  wrap.appendChild(btn);
+  return wrap;
+}
+
+function screenEditarDia(idx){
+  const day = state.routine.days[idx];
+  const wrap = document.createElement('div');
+  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
+  back.onclick = ()=>{ editDayIdx=null; render(); };
+  wrap.appendChild(back);
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Editar: ${day.name}</h2>`));
+  wrap.appendChild(el(`<textarea id="daypaste">${diaToText(day, idx)}</textarea>`));
+  const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar cambios de este día</button>`);
+  btn.onclick = ()=>{
+    const txt = document.getElementById('daypaste').value;
+    const parsed = parseRoutine(txt);
+    if(!parsed.days.length){ alert('No se pudo leer el día. Revisá el formato.'); return; }
+    state.routine.days[idx] = parsed.days[0];
+    saveState();
+    editDayIdx = null;
+    render();
+  };
   wrap.appendChild(btn);
   return wrap;
 }
