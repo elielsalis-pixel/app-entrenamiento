@@ -140,16 +140,22 @@ function parseRoutine(text){
     const parts = line.split('|').map(p=>p.trim());
     if(parts.length < 1) return;
     const nombre = parts[0];
-    let descanso = 90, series = 3, alternativas = [];
+    let descanso = 90, series = 3, calentamiento = 0, aproximacion = 0, repsMin = 8, repsMax = 12, alternativas = [];
     parts.slice(1).forEach(p=>{
       const dm = p.match(/descanso\s*(\d+)/i);
       const sm = p.match(/series\s*(\d+)/i);
+      const cm = p.match(/calentamiento\s*(\d+)/i);
+      const apm = p.match(/aproximaci[oó]n\s*(\d+)/i);
+      const rm = p.match(/reps\s*(\d+)\s*-\s*(\d+)/i);
       const am = p.match(/alt:\s*(.+)/i);
       if(dm) descanso = parseInt(dm[1],10);
       if(sm) series = parseInt(sm[1],10);
+      if(cm) calentamiento = parseInt(cm[1],10);
+      if(apm) aproximacion = parseInt(apm[1],10);
+      if(rm){ repsMin = parseInt(rm[1],10); repsMax = parseInt(rm[2],10); }
       if(am) alternativas = am[1].split(',').map(a=>({nombre:a.trim(), detalle:''}));
     });
-    current.exercises.push({nombre, descanso, series, alternativas});
+    current.exercises.push({nombre, descanso, series, calentamiento, aproximacion, repsMin, repsMax, alternativas});
   });
   return {days};
 }
@@ -159,6 +165,7 @@ let currentTab = 'inicio';
 const TABS = [
   {id:'inicio', label:'Inicio', icon:'home'},
   {id:'sesion', label:'Sesión', icon:'session'},
+  {id:'rutina', label:'Rutina', icon:'edit'},
   {id:'historial', label:'Historial', icon:'history'}
 ];
 
@@ -188,6 +195,7 @@ function render(){
   if(!state.routine){ s.appendChild(screenSinRutina()); return; }
   if(currentTab==='inicio') s.appendChild(screenInicio());
   else if(currentTab==='sesion') s.appendChild(screenSesionWrap());
+  else if(currentTab==='rutina') s.appendChild(screenRutina());
   else if(currentTab==='historial') s.appendChild(screenHistorial());
 }
 
@@ -206,9 +214,34 @@ function cargarRutina(){
   const txt = document.getElementById('routinepaste').value;
   const parsed = parseRoutine(txt);
   if(!parsed.days.length){ alert('No se pudo leer la rutina. Revisá el formato.'); return; }
+  const reemplazando = !!state.routine;
   state.routine = parsed;
   saveState();
+  if(reemplazando){ currentTab='inicio'; }
   render();
+}
+
+/* ---------- pantalla: rutina (ver actual / cargar nueva) ---------- */
+function screenRutina(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Rutina actual</h2>`));
+  state.routine.days.forEach((d,i)=>{
+    const card = el(`<div class="card" style="margin-bottom:10px"></div>`);
+    card.appendChild(el(`<p style="font-weight:600;margin-bottom:6px">${d.name}</p>`));
+    d.exercises.forEach(e=>{
+      card.appendChild(el(`<p class="muted" style="font-size:13px;margin-bottom:2px">${e.nombre} — ${e.series} series${e.repsMin?` de ${e.repsMin}-${e.repsMax} reps`:''}</p>`));
+    });
+    wrap.appendChild(card);
+  });
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:20px 0 8px">Cargar una rutina nueva</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Esto reemplaza la rutina actual. Tu historial de sesiones no se pierde.</p>`));
+  wrap.appendChild(el(`<textarea id="routinepaste" placeholder="DIA 1: Push
+Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press banca en Smith, Press con mancuernas"></textarea>`));
+  const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina</button>`);
+  btn.onclick = ()=>{ if(confirm('¿Reemplazar la rutina actual por esta nueva?')){ cargarRutina(); } };
+  wrap.appendChild(btn);
+  return wrap;
 }
 
 /* ---------- pantalla: inicio ---------- */
@@ -274,11 +307,16 @@ function empezarSesion(dayIdx){
 }
 function seedSets(e){
   const last = state.lastByExercise[e.nombre];
-  const n = e.series || 3;
+  const repsTarget = last ? last.reps : Math.round(((e.repsMin||8)+(e.repsMax||12))/2);
+  const pesoTarget = last ? last.peso : 0;
   const sets = [];
-  for(let i=0;i<n;i++){
-    sets.push({peso: last?last.peso:0, reps: last?last.reps:0, tipo:'Normal', done:false});
-  }
+  const nCal = e.calentamiento || 0;
+  const nApx = e.aproximacion || 0;
+  const nNorm = e.series || 3;
+  for(let i=0;i<nCal;i++) sets.push({peso: Math.round(pesoTarget*0.5), reps: repsTarget, tipo:'Calentamiento', done:false});
+  for(let i=0;i<nApx;i++) sets.push({peso: Math.round(pesoTarget*0.75), reps: repsTarget, tipo:'Aproximación', done:false});
+  for(let i=0;i<nNorm;i++) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false});
+  if(sets.length===0) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false});
   return sets;
 }
 function exDone(ej){ return ej.sets.every(s=>s.done); }
@@ -328,8 +366,9 @@ function screenSesion(){
   }
   wrap.appendChild(photoBox);
   if(!imgPath){
-    const addRow = el(`<div style="display:flex;justify-content:flex-end;margin:-4px 0 10px"></div>`);
-    const addBtn = el(`<button class="btn" style="font-size:11px;padding:4px 8px">Agregar foto</button>`);
+    const addRow = el(`<div style="margin:-4px 0 10px"></div>`);
+    const addLabel = el(`<p class="muted" style="font-size:11px;margin-bottom:4px">No hay foto para este ejercicio</p>`);
+    const addBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">Agregar foto</button>`);
     const fileInput = el(`<input type="file" accept="image/*" style="display:none">`);
     addBtn.onclick = ()=> fileInput.click();
     fileInput.onchange = (e)=>{
@@ -343,15 +382,18 @@ function screenSesion(){
       };
       reader.readAsDataURL(file);
     };
-    addRow.appendChild(addBtn); addRow.appendChild(fileInput);
+    addRow.appendChild(addLabel); addRow.appendChild(addBtn); addRow.appendChild(fileInput);
     wrap.appendChild(addRow);
   }
 
-  const head = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2>${ej.nombre}</h2></div>`);
+  const head = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px"><h2>${ej.nombre}</h2></div>`);
   const btnCambiar = el(`<button class="btn" style="font-size:12px;padding:5px 10px">Cambiar</button>`);
   btnCambiar.onclick = ()=>{ sustEjIdx = ses.focusIdx; sessionView='sustituir'; render(); };
   head.appendChild(btnCambiar);
   wrap.appendChild(head);
+  if(ej.repsMin){
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:10px">Objetivo: ${ej.repsMin}-${ej.repsMax} reps</p>`));
+  }
 
   wrap.appendChild(renderTimerBox(ej));
 
