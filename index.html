@@ -268,6 +268,31 @@ Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 |
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina completa</button>`);
   btn.onclick = ()=>{ if(confirm('¿Reemplazar toda la rutina actual por esta nueva?')){ cargarRutina(); } };
   wrap.appendChild(btn);
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Reiniciar avance</p>`));
+  const btnResetSemana = el(`<button class="btn btn-full" style="margin-bottom:8px">Reiniciar semana actual (volver al Día 1 de esta semana)</button>`);
+  btnResetSemana.onclick = ()=>{
+    if(confirm('¿Volver a repetir la semana actual desde el Día 1?')){
+      state.slot = Math.floor(state.slot/5)*5;
+      state.showWeekBanner = null;
+      saveState(); render();
+    }
+  };
+  wrap.appendChild(btnResetSemana);
+  const btnResetTodo = el(`<button class="btn btn-full">Reiniciar rutina completa (volver a Semana 1)</button>`);
+  btnResetTodo.onclick = ()=>{
+    if(confirm('¿Reiniciar toda la rutina desde Semana 1? El historial de sesiones ya guardado no se borra.')){
+      state.slot = 0;
+      state.showWeekBanner = null;
+      saveState(); render();
+    }
+  };
+  wrap.appendChild(btnResetTodo);
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Frases motivadoras</p>`));
+  const motToggle = el(`<button class="btn btn-full">${state.motivacionOn===false?'Activar frases motivadoras':'Desactivar frases motivadoras'}</button>`);
+  motToggle.onclick = ()=>{ state.motivacionOn = state.motivacionOn===false ? true : false; saveState(); render(); };
+  wrap.appendChild(motToggle);
   return wrap;
 }
 
@@ -345,10 +370,11 @@ function empezarSesion(dayIdx){
     focusIdx: 0,
     exercises: day.exercises.map(e=>({
       nombre: e.nombre, descanso: (state.customDescanso && state.customDescanso[e.nombre]) || e.descanso,
-      alternativas: e.alternativas,
+      alternativas: e.alternativas, repsMin: e.repsMin, repsMax: e.repsMax,
       sets: seedSets(e)
     }))
   };
+  state.resumenCelebrado = false;
   setSessionView('activa');
   setTab('sesion');
 }
@@ -367,6 +393,12 @@ function seedSets(e){
   return sets;
 }
 function exDone(ej){ return ej.sets.every(s=>s.done); }
+function debeSubirPeso(ej){
+  const normales = ej.sets.filter(s=>s.tipo==='Normal');
+  if(!normales.length || !normales.every(s=>s.done)) return false;
+  const max = ej.repsMax || 12;
+  return normales.every(s=>s.reps >= max);
+}
 
 function screenSesionWrap(){
   if(!state.activeSession){
@@ -444,7 +476,7 @@ function screenSesion(){
 
   wrap.appendChild(renderTimerBox(ej));
 
-  const gridHead = el(`<div class="set-grid" style="font-size:11px;color:var(--text-muted)"><span>#</span><span>Kg</span><span>Reps</span><span>Tipo</span><span></span></div>`);
+  const gridHead = el(`<div class="set-grid" style="font-size:11px;color:var(--text-muted)"><span>#</span><span>Kg</span><span>Reps${ej.repsMin?` (${ej.repsMin}-${ej.repsMax})`:''}</span><span>Tipo</span><span></span></div>`);
   wrap.appendChild(gridHead);
 
   ej.sets.forEach((s,si)=>{
@@ -458,7 +490,7 @@ function screenSesion(){
   addBtn.onclick = ()=>{ const last = ej.sets[ej.sets.length-1]; ej.sets.push({peso:last.peso,reps:last.reps,tipo:'Normal',done:false}); saveState(); render(); };
   wrap.appendChild(addBtn);
 
-  if(exDone(ej)){
+  if(debeSubirPeso(ej)){
     wrap.appendChild(el(`<p style="font-size:12px;color:var(--success);margin-top:10px">${icon('arrowup')} Subí peso la próxima</p>`));
   }
 
@@ -470,7 +502,7 @@ function screenSesion(){
   }
   if(ses.focusIdx<ses.exercises.length-1){
     const next = el(`<button class="btn" style="flex:1">Siguiente ${icon('chevright')}</button>`);
-    next.onclick = ()=>{ ses.focusIdx++; saveState(); render(); };
+    next.onclick = ()=>{ ses.focusIdx++; saveState(); render(); mostrarMotivacion(frase(FRASES_SIGUIENTE)); };
     nav.appendChild(next);
   }
   wrap.appendChild(nav);
@@ -575,6 +607,38 @@ function registrarSetDone(ej,s){
   }
 }
 
+/* ---------- sonido y frases motivadoras ---------- */
+function beep(){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0,0.15,0.3].forEach((t,i)=>{
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = i<2 ? 880 : 1320;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + t);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.12);
+      osc.start(ctx.currentTime + t);
+      osc.stop(ctx.currentTime + t + 0.13);
+    });
+  } catch(e){}
+}
+
+const FRASES_TIMER = ['¡Vamos que se puede!','A meterle con todo','¡Dale con fuerza!','Concentración total','¡Es tu momento!'];
+const FRASES_SIGUIENTE = ['Siguiente ejercicio, ¡a full!','Vamos por el que sigue','No aflojes ahora'];
+const FRASES_FINAL = ['¡Sesión completada, gran laburo!','¡Lo lograste, a descansar!','¡Excelente entrenamiento hoy!'];
+
+function frase(lista){ return lista[Math.floor(Math.random()*lista.length)]; }
+
+function mostrarMotivacion(texto){
+  if(state.motivacionOn===false) return;
+  const existing = document.getElementById('motivtoast');
+  if(existing) existing.remove();
+  const toast = el(`<div id="motivtoast" style="position:fixed;left:16px;right:16px;bottom:80px;max-width:448px;margin:0 auto;background:var(--text);color:var(--bg);padding:12px 16px;border-radius:10px;text-align:center;font-size:14px;font-weight:600;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.2)">${texto}</div>`);
+  document.body.appendChild(toast);
+  setTimeout(()=>{ toast.remove(); }, 2200);
+}
+
 function iniciarTimer(ej){
   clearInterval(restInterval);
   ej.timerCorriendo = true;
@@ -582,7 +646,11 @@ function iniciarTimer(ej){
   restInterval = setInterval(()=>{
     if(!ej.timerCorriendo) return;
     ej.tiempoRestante--;
-    if(ej.tiempoRestante <= 0){ ej.tiempoRestante = 0; ej.timerCorriendo=false; clearInterval(restInterval); }
+    if(ej.tiempoRestante <= 0){
+      ej.tiempoRestante = 0; ej.timerCorriendo=false; clearInterval(restInterval);
+      beep();
+      mostrarMotivacion(frase(FRASES_TIMER));
+    }
     const label = document.querySelector('.timerbox p:nth-of-type(2)');
     if(label) label.textContent = fmtTime(ej.tiempoRestante);
   },1000);
@@ -660,8 +728,9 @@ function avanzarSlot(){
 function screenResumen(){
   const r = state.lastResumen;
   const totalSeries = r.exercises.reduce((a,e)=>a+e.sets.length,0);
+  if(!state.resumenCelebrado){ mostrarMotivacion(frase(FRASES_FINAL)); beep(); state.resumenCelebrado = true; saveState(); }
   const wrap = el(`<div style="text-align:center;padding:16px 0">
-    <div style="color:var(--success)">${icon('check')}</div>
+    <div style="color:var(--success);font-size:28px">🎉</div>
     <h1 style="margin:12px 0 4px">Sesión completa</h1>
     <p class="muted" style="font-size:13px;margin-bottom:20px">${r.dayName}</p>
   </div>`);
