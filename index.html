@@ -353,6 +353,26 @@ function screenRutina(){
   const motToggle = el(`<button class="btn btn-full">${state.motivacionOn===false?'Activar frases motivadoras':'Desactivar frases motivadoras'}</button>`);
   motToggle.onclick = ()=>{ state.motivacionOn = state.motivacionOn===false ? true : false; saveState(); render(); };
   wrap.appendChild(motToggle);
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Compartir la app</p>`));
+  const appUrl = window.location.origin + window.location.pathname;
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;word-break:break-all;margin-bottom:8px">${appUrl}</p>`));
+  const shareRow = el(`<div style="display:flex;gap:8px"></div>`);
+  const copyLinkBtn = el(`<button class="btn" style="flex:1">${icon('copy')} Copiar link</button>`);
+  const copyMsg = el(`<div style="font-size:12px;color:var(--success);text-align:center;margin-top:6px"></div>`);
+  copyLinkBtn.onclick = ()=>{
+    navigator.clipboard.writeText(appUrl).then(()=>{ copyMsg.textContent = 'Link copiado'; })
+      .catch(()=>{ copyMsg.textContent = 'No se pudo copiar.'; });
+  };
+  shareRow.appendChild(copyLinkBtn);
+  if(navigator.share){
+    const shareBtn = el(`<button class="btn" style="flex:1">Compartir</button>`);
+    shareBtn.onclick = ()=>{ navigator.share({title:'App de Entrenamiento', url: appUrl}).catch(()=>{}); };
+    shareRow.appendChild(shareBtn);
+  }
+  wrap.appendChild(shareRow);
+  wrap.appendChild(copyMsg);
+
   return wrap;
 }
 
