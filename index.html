@@ -416,6 +416,11 @@ function screenSesionWrap(){
 function screenSesion(){
   const ses = state.activeSession;
   const ej = ses.exercises[ses.focusIdx];
+  if(ej.repsMin===undefined){
+    const day = state.routine.days[ses.dayIdx % state.routine.days.length];
+    const orig = day && day.exercises.find(x=>x.nombre===ej.nombre);
+    if(orig){ ej.repsMin = orig.repsMin; ej.repsMax = orig.repsMax; saveState(); }
+  }
   const wrap = document.createElement('div');
 
   const seg = el(`<div class="segbar"></div>`);
