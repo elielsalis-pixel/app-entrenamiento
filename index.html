@@ -204,22 +204,58 @@ function render(){
 }
 
 /* ---------- pantalla: sin rutina cargada ---------- */
+const PROMPT_GENERADOR = `Necesito que me armes una rutina de entrenamiento de gimnasio. Antes de armarla, hacéme las preguntas que necesites sobre lo que no te haya contestado abajo. Si dejo algo en blanco o pongo "no sé", recomendame vos con criterio de entrenador.
+
+MIS DATOS:
+- Objetivo (fuerza, hipertrofia, resistencia, salud general, bajar de peso): 
+- Nivel de experiencia (principiante, intermedio, avanzado, o tiempo que llevo entrenando/parado): 
+- Días por semana que puedo entrenar: 
+- Tiempo disponible por sesión (minutos): 
+- Equipamiento disponible (gimnasio completo, casa con mancuernas, sin equipo, etc.): 
+- Lesiones, molestias o limitaciones físicas a tener en cuenta: 
+- ¿Querés entrenamiento aeróbico/cardio? (sí integrado el mismo día / sí en día aparte / no): 
+- Cantidad de ejercicios por día que preferís (o "recomendame"): 
+- Rango de repeticiones que preferís, ej. 8-12 (o "recomendame según mi objetivo"): 
+- Grupos musculares que querés priorizar, si hay alguno: 
+
+Una vez que tengas todo, dame la rutina completa día por día, EXACTAMENTE en este formato (para pegarla en una app de seguimiento):
+
+DIA 1: [nombre del día, ej. Push]
+[Nombre del ejercicio] | descanso [segundos] | calentamiento [cantidad, 0 si no aplica] | aproximacion [cantidad, 0 si no aplica] | series [cantidad de series de trabajo] | reps [rango, ej. 8-12] | alt: [sustituto 1], [sustituto 2]
+
+Reglas del formato:
+- Un bloque "DIA N: nombre" por cada día.
+- Un renglón por ejercicio, con los campos separados por " | ", tal cual el orden de arriba.
+- "descanso" siempre en segundos, no en minutos.
+- "calentamiento" y "aproximacion" son cantidad de series de ese tipo, no le pongas texto.
+- "series" son solo las series de trabajo, sin contar calentamiento/aproximación.
+- Si el ejercicio tiene sustitutos, listalos después de "alt:", separados por coma. Si no tiene, omití ese campo.
+- No agregues explicaciones, numeración ni texto suelto dentro del bloque de ejercicios — la app lo lee línea por línea y cualquier texto extra rompe la lectura.`;
+
 function screenSinRutina(){
   const wrap = el(`<div>
     <h1>Cargá tu rutina</h1>
     <p class="secondary" style="margin:8px 0 16px">Pegá tu rutina abajo siguiendo este formato, un renglón por ejercicio.</p>
-    <div class="card" style="margin-bottom:16px;font-size:12px;line-height:1.6">
+    <div class="card" style="margin-bottom:12px;font-size:12px;line-height:1.6">
       <p style="font-weight:600;margin-bottom:6px">Formato:</p>
       <p class="muted" style="margin-bottom:8px">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio es un renglón con los datos separados por <b> | </b>.</p>
-      <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-word">DIA 1: Push
-Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press en Smith, Press mancuernas</p>
+      <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-word">DIA 1: [nombre del día]
+[Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]</p>
       <p class="muted" style="margin-top:8px">Campos: <b>descanso</b> en segundos · <b>calentamiento</b>/<b>aproximacion</b> = cantidad de series de ese tipo (0 si no aplica) · <b>series</b> = series normales de trabajo · <b>reps</b> = rango objetivo · <b>alt</b> = sustitutos separados por coma (opcional).</p>
-      <p class="muted" style="margin-top:8px">Podés escribir esto a mano, pedírselo a un asistente de IA, o copiarlo de otra rutina ya armada.</p>
     </div>
+    <button class="btn btn-full" id="btnCopiarPrompt" style="margin-bottom:16px">📋 Copiar prompt para pedírselo a una IA</button>
+    <div id="promptMsg" style="font-size:12px;color:var(--success);text-align:center;margin-bottom:8px"></div>
+    <p class="muted" style="font-size:12px;margin-bottom:16px">Pegalo en cualquier IA (Claude, ChatGPT, Gemini) — trae preguntas sobre tus días, objetivo, tiempo, equipamiento y demás, y te devuelve la rutina lista en el formato correcto para pegar acá abajo.</p>
     <textarea id="routinepaste" placeholder="DIA 1: Push
-Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press banca en Smith, Press con mancuernas"></textarea>
+[Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]"></textarea>
     <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="cargarRutina()">Cargar rutina</button>
   </div>`);
+  const copyBtn = wrap.querySelector('#btnCopiarPrompt');
+  const msg = wrap.querySelector('#promptMsg');
+  copyBtn.onclick = ()=>{
+    navigator.clipboard.writeText(PROMPT_GENERADOR).then(()=>{ msg.textContent = 'Prompt copiado, pegalo en tu IA preferida'; })
+      .catch(()=>{ msg.textContent = 'No se pudo copiar automáticamente.'; });
+  };
   return wrap;
 }
 function cargarRutina(){
@@ -274,13 +310,21 @@ function screenRutina(){
   const verFormatoBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px;margin-bottom:10px">Ver formato</button>`);
   const formatoBox = el(`<div class="card" style="margin-bottom:10px;font-size:12px;line-height:1.6;display:none">
     <p class="muted">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio: nombre + datos separados por <b> | </b>.</p>
-    <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:6px">Press banca | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press en Smith, Press mancuernas</p>
+    <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:6px">[Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]</p>
   </div>`);
   verFormatoBtn.onclick = ()=>{ formatoBox.style.display = formatoBox.style.display==='none' ? 'block' : 'none'; };
   wrap.appendChild(verFormatoBtn);
   wrap.appendChild(formatoBox);
+  const copyPromptBtn2 = el(`<button class="btn btn-full" style="margin-bottom:10px">📋 Copiar prompt para pedírselo a una IA</button>`);
+  const promptMsg2 = el(`<div style="font-size:12px;color:var(--success);text-align:center;margin-bottom:8px"></div>`);
+  copyPromptBtn2.onclick = ()=>{
+    navigator.clipboard.writeText(PROMPT_GENERADOR).then(()=>{ promptMsg2.textContent = 'Prompt copiado, pegalo en tu IA preferida'; })
+      .catch(()=>{ promptMsg2.textContent = 'No se pudo copiar automáticamente.'; });
+  };
+  wrap.appendChild(copyPromptBtn2);
+  wrap.appendChild(promptMsg2);
   wrap.appendChild(el(`<textarea id="routinepaste" placeholder="DIA 1: Push
-Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press banca en Smith, Press con mancuernas"></textarea>`));
+[Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]"></textarea>`));
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina completa</button>`);
   btn.onclick = ()=>{ if(confirm('¿Reemplazar toda la rutina actual por esta nueva?')){ cargarRutina(); } };
   wrap.appendChild(btn);
