@@ -349,6 +349,37 @@ function screenRutina(){
   };
   wrap.appendChild(btnResetTodo);
 
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Sonido al terminar el descanso</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Por defecto suena un beep. Podés subir tu propio audio corto (mp3, m4a, ogg) para que suene en su lugar.</p>`));
+  if(state.customSoundName){
+    wrap.appendChild(el(`<p style="font-size:13px;margin-bottom:8px">🔊 Actual: ${state.customSoundName}</p>`));
+  }
+  const soundRow = el(`<div style="display:flex;gap:8px;margin-bottom:8px"></div>`);
+  const uploadBtn = el(`<button class="btn" style="flex:1">Subir audio</button>`);
+  const soundInput = el(`<input type="file" accept="audio/*" style="display:none">`);
+  uploadBtn.onclick = ()=> soundInput.click();
+  soundInput.onchange = (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    if(file.size > 2*1024*1024){ alert('El archivo pesa más de 2MB — elegí uno más corto para que no ralentice la app.'); return; }
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      state.customSoundData = reader.result;
+      state.customSoundName = file.name;
+      saveState(); render();
+    };
+    reader.readAsDataURL(file);
+  };
+  soundRow.appendChild(uploadBtn); soundRow.appendChild(soundInput);
+  if(state.customSoundData){
+    const testBtn = el(`<button class="btn" style="flex:1">Probar</button>`);
+    testBtn.onclick = ()=>{ beep(); };
+    const delBtn = el(`<button class="btn" style="flex:1">Quitar</button>`);
+    delBtn.onclick = ()=>{ delete state.customSoundData; delete state.customSoundName; saveState(); render(); };
+    soundRow.appendChild(testBtn); soundRow.appendChild(delBtn);
+  }
+  wrap.appendChild(soundRow);
+
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Frases motivadoras</p>`));
   const motToggle = el(`<button class="btn btn-full">${state.motivacionOn===false?'Activar frases motivadoras':'Desactivar frases motivadoras'}</button>`);
   motToggle.onclick = ()=>{ state.motivacionOn = state.motivacionOn===false ? true : false; saveState(); render(); };
@@ -868,6 +899,9 @@ function registrarSetDone(ej,s){
 
 /* ---------- sonido y frases motivadoras ---------- */
 function beep(){
+  if(state.customSoundData){
+    try{ const audio = new Audio(state.customSoundData); audio.play().catch(()=>{}); return; } catch(e){}
+  }
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     [0,0.15,0.3].forEach((t,i)=>{
