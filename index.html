@@ -350,12 +350,20 @@ function screenRutina(){
   wrap.appendChild(btnResetTodo);
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Sonido al terminar el descanso</p>`));
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Por defecto suena un beep. Podés subir tu propio audio corto (mp3, m4a, ogg) para que suene en su lugar.</p>`));
-  if(state.customSoundName){
-    wrap.appendChild(el(`<p style="font-size:13px;margin-bottom:8px">🔊 Actual: ${state.customSoundName}</p>`));
-  }
-  const soundRow = el(`<div style="display:flex;gap:8px;margin-bottom:8px"></div>`);
-  const uploadBtn = el(`<button class="btn" style="flex:1">Subir audio</button>`);
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Por defecto suena un beep. Podés subir varios audios cortos (mp3, m4a, ogg) — si hay más de uno, suena uno al azar cada vez.</p>`));
+  state.customSounds = state.customSounds || [];
+  state.customSounds.forEach((snd,i)=>{
+    const row = el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="flex:1;font-size:13px">🔊 ${snd.name}</span>
+    </div>`);
+    const testBtn = el(`<button class="btn" style="font-size:12px;padding:5px 10px">Probar</button>`);
+    testBtn.onclick = ()=>{ new Audio(snd.data).play().catch(()=>{}); };
+    const delBtn = el(`<button class="btn" style="font-size:12px;padding:5px 10px">Quitar</button>`);
+    delBtn.onclick = ()=>{ state.customSounds.splice(i,1); saveState(); render(); };
+    row.appendChild(testBtn); row.appendChild(delBtn);
+    wrap.appendChild(row);
+  });
+  const uploadBtn = el(`<button class="btn btn-full" style="margin-top:4px">+ Subir audio</button>`);
   const soundInput = el(`<input type="file" accept="audio/*" style="display:none">`);
   uploadBtn.onclick = ()=> soundInput.click();
   soundInput.onchange = (e)=>{
@@ -364,21 +372,12 @@ function screenRutina(){
     if(file.size > 2*1024*1024){ alert('El archivo pesa más de 2MB — elegí uno más corto para que no ralentice la app.'); return; }
     const reader = new FileReader();
     reader.onload = ()=>{
-      state.customSoundData = reader.result;
-      state.customSoundName = file.name;
+      state.customSounds.push({name: file.name, data: reader.result});
       saveState(); render();
     };
     reader.readAsDataURL(file);
   };
-  soundRow.appendChild(uploadBtn); soundRow.appendChild(soundInput);
-  if(state.customSoundData){
-    const testBtn = el(`<button class="btn" style="flex:1">Probar</button>`);
-    testBtn.onclick = ()=>{ beep(); };
-    const delBtn = el(`<button class="btn" style="flex:1">Quitar</button>`);
-    delBtn.onclick = ()=>{ delete state.customSoundData; delete state.customSoundName; saveState(); render(); };
-    soundRow.appendChild(testBtn); soundRow.appendChild(delBtn);
-  }
-  wrap.appendChild(soundRow);
+  wrap.appendChild(uploadBtn); wrap.appendChild(soundInput);
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Frases motivadoras</p>`));
   const motToggle = el(`<button class="btn btn-full">${state.motivacionOn===false?'Activar frases motivadoras':'Desactivar frases motivadoras'}</button>`);
@@ -899,8 +898,13 @@ function registrarSetDone(ej,s){
 
 /* ---------- sonido y frases motivadoras ---------- */
 function beep(){
-  if(state.customSoundData){
-    try{ const audio = new Audio(state.customSoundData); audio.play().catch(()=>{}); return; } catch(e){}
+  if(state.customSounds && state.customSounds.length){
+    try{
+      const elegido = state.customSounds[Math.floor(Math.random()*state.customSounds.length)];
+      const audio = new Audio(elegido.data);
+      audio.play().catch(()=>{});
+      return;
+    } catch(e){}
   }
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
