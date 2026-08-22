@@ -207,9 +207,17 @@ function render(){
 function screenSinRutina(){
   const wrap = el(`<div>
     <h1>Cargá tu rutina</h1>
-    <p class="secondary" style="margin:8px 0 12px">Pegá acá el bloque que te dio el Project de Entrenamiento.</p>
+    <p class="secondary" style="margin:8px 0 16px">Pegá tu rutina abajo siguiendo este formato, un renglón por ejercicio.</p>
+    <div class="card" style="margin-bottom:16px;font-size:12px;line-height:1.6">
+      <p style="font-weight:600;margin-bottom:6px">Formato:</p>
+      <p class="muted" style="margin-bottom:8px">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio es un renglón con los datos separados por <b> | </b>.</p>
+      <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-word">DIA 1: Push
+Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press en Smith, Press mancuernas</p>
+      <p class="muted" style="margin-top:8px">Campos: <b>descanso</b> en segundos · <b>calentamiento</b>/<b>aproximacion</b> = cantidad de series de ese tipo (0 si no aplica) · <b>series</b> = series normales de trabajo · <b>reps</b> = rango objetivo · <b>alt</b> = sustitutos separados por coma (opcional).</p>
+      <p class="muted" style="margin-top:8px">Podés escribir esto a mano, pedírselo a un asistente de IA, o copiarlo de otra rutina ya armada.</p>
+    </div>
     <textarea id="routinepaste" placeholder="DIA 1: Push
-Press banca plano | descanso 120 | series 3 | alt: Press banca en Smith, Press con mancuernas"></textarea>
+Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press banca en Smith, Press con mancuernas"></textarea>
     <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="cargarRutina()">Cargar rutina</button>
   </div>`);
   return wrap;
@@ -263,6 +271,14 @@ function screenRutina(){
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:20px 0 8px">Cargar una rutina nueva completa</p>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Esto reemplaza todos los días. Tu historial de sesiones no se pierde.</p>`));
+  const verFormatoBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px;margin-bottom:10px">Ver formato</button>`);
+  const formatoBox = el(`<div class="card" style="margin-bottom:10px;font-size:12px;line-height:1.6;display:none">
+    <p class="muted">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio: nombre + datos separados por <b> | </b>.</p>
+    <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:6px">Press banca | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press en Smith, Press mancuernas</p>
+  </div>`);
+  verFormatoBtn.onclick = ()=>{ formatoBox.style.display = formatoBox.style.display==='none' ? 'block' : 'none'; };
+  wrap.appendChild(verFormatoBtn);
+  wrap.appendChild(formatoBox);
   wrap.appendChild(el(`<textarea id="routinepaste" placeholder="DIA 1: Push
 Press banca plano | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: Press banca en Smith, Press con mancuernas"></textarea>`));
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina completa</button>`);
