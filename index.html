@@ -427,7 +427,32 @@ function screenInicio(){
     const estado = i < dayIdx ? 'hecho' : (i===dayIdx ? 'hoy' : 'pendiente');
     const ic = estado==='hecho'?icon('check'):estado==='hoy'?icon('play'):icon('circle');
     const color = estado==='hecho'?'var(--success)':estado==='hoy'?'var(--accent)':'var(--text-muted)';
-    wrap.appendChild(el(`<div class="weekrow"><span style="color:${color}">${ic}</span><span style="color:${estado==='pendiente'?'var(--text-muted)':'var(--text)'}">${d.name}</span></div>`));
+    const expandido = state.diaExpandido===i;
+
+    const dayCard = document.createElement('div');
+    dayCard.className = 'card';
+    dayCard.style.marginBottom = '8px';
+    dayCard.style.padding = '10px 12px';
+
+    const header = el(`<div style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <span style="color:${color}">${ic}</span>
+      <span style="flex:1;color:${estado==='pendiente'?'var(--text-muted)':'var(--text)'};font-size:14px">${d.name}</span>
+      <span class="muted" style="font-size:11px">${d.exercises.length} ejerc.</span>
+      <span style="color:var(--text-muted);display:flex;transform:rotate(${expandido?'90':'0'}deg);transition:transform .15s">${icon('chevright')}</span>
+    </div>`);
+    header.onclick = ()=>{ state.diaExpandido = expandido ? null : i; saveState(); render(); };
+    dayCard.appendChild(header);
+
+    if(expandido){
+      const detalle = document.createElement('div');
+      detalle.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border)';
+      d.exercises.forEach(e=>{
+        const totalSets = (e.calentamiento||0)+(e.aproximacion||0)+(e.series||0);
+        detalle.appendChild(el(`<p style="font-size:13px;margin-bottom:4px">${e.nombre} <span class="muted">— ${totalSets} series${e.repsMin?` × ${e.repsMin}-${e.repsMax} reps`:''}</span></p>`));
+      });
+      dayCard.appendChild(detalle);
+    }
+    wrap.appendChild(dayCard);
   });
   return wrap;
 }
