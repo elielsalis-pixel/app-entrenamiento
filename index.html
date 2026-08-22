@@ -352,6 +352,15 @@ function screenRutina(){
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Sonido al terminar el descanso</p>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Por defecto suena un beep. Podés subir varios audios cortos (mp3, m4a, ogg) — si hay más de uno, suena uno al azar cada vez.</p>`));
   state.customSounds = state.customSounds || [];
+  if(state.customSounds.length){
+    const selectorRow = el(`<div style="display:flex;gap:8px;margin-bottom:10px"></div>`);
+    const btnBeep = el(`<button class="btn" style="flex:1;${state.sonidoPreferido!=='custom'?'background:var(--text);color:var(--bg)':''}">Beep predeterminado</button>`);
+    const btnCustom = el(`<button class="btn" style="flex:1;${state.sonidoPreferido==='custom'?'background:var(--text);color:var(--bg)':''}">Mis audios</button>`);
+    btnBeep.onclick = ()=>{ state.sonidoPreferido = 'beep'; saveState(); render(); };
+    btnCustom.onclick = ()=>{ state.sonidoPreferido = 'custom'; saveState(); render(); };
+    selectorRow.appendChild(btnBeep); selectorRow.appendChild(btnCustom);
+    wrap.appendChild(selectorRow);
+  }
   state.customSounds.forEach((snd,i)=>{
     const row = el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
       <span style="flex:1;font-size:13px">🔊 ${snd.name}</span>
@@ -373,6 +382,7 @@ function screenRutina(){
     const reader = new FileReader();
     reader.onload = ()=>{
       state.customSounds.push({name: file.name, data: reader.result});
+      if(state.sonidoPreferido===undefined) state.sonidoPreferido = 'custom';
       saveState(); render();
     };
     reader.readAsDataURL(file);
@@ -898,7 +908,7 @@ function registrarSetDone(ej,s){
 
 /* ---------- sonido y frases motivadoras ---------- */
 function beep(){
-  if(state.customSounds && state.customSounds.length){
+  if(state.sonidoPreferido==='custom' && state.customSounds && state.customSounds.length){
     try{
       const elegido = state.customSounds[Math.floor(Math.random()*state.customSounds.length)];
       const audio = new Audio(elegido.data);
