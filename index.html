@@ -386,10 +386,10 @@ function seedSets(e){
   const nCal = e.calentamiento || 0;
   const nApx = e.aproximacion || 0;
   const nNorm = e.series || 3;
-  for(let i=0;i<nCal;i++) sets.push({peso: Math.round(pesoTarget*0.5), reps: repsTarget, tipo:'Calentamiento', done:false});
-  for(let i=0;i<nApx;i++) sets.push({peso: Math.round(pesoTarget*0.75), reps: repsTarget, tipo:'Aproximación', done:false});
-  for(let i=0;i<nNorm;i++) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false});
-  if(sets.length===0) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false});
+  for(let i=0;i<nCal;i++) sets.push({peso: Math.round(pesoTarget*0.5), reps: repsTarget, tipo:'Calentamiento', done:false, rpe:null});
+  for(let i=0;i<nApx;i++) sets.push({peso: Math.round(pesoTarget*0.75), reps: repsTarget, tipo:'Aproximación', done:false, rpe:null});
+  for(let i=0;i<nNorm;i++) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false, rpe:null});
+  if(sets.length===0) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false, rpe:null});
   return sets;
 }
 function exDone(ej){ return ej.sets.every(s=>s.done); }
@@ -410,6 +410,8 @@ function screenSesionWrap(){
   }
   if(sessionView==='resumen') return screenResumen();
   if(sessionView==='sustituir') return screenSustituir();
+  if(sessionView==='discos') return screenDiscos();
+  if(sessionView==='notas') return screenNotas();
   return screenSesion();
 }
 
@@ -471,15 +473,38 @@ function screenSesion(){
   }
 
   const head = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px"><h2>${ej.nombre}</h2></div>`);
+  const headBtns = el(`<div style="display:flex;gap:6px"></div>`);
+  const btnNotas = el(`<button aria-label="Notas del ejercicio" class="btn" style="font-size:12px;padding:5px 8px">📝</button>`);
+  btnNotas.onclick = ()=>{ notasEjIdx = ses.focusIdx; setSessionView('notas'); render(); };
   const btnCambiar = el(`<button class="btn" style="font-size:12px;padding:5px 10px">Cambiar</button>`);
   btnCambiar.onclick = ()=>{ sustEjIdx = ses.focusIdx; setSessionView('sustituir'); render(); };
-  head.appendChild(btnCambiar);
+  headBtns.appendChild(btnNotas); headBtns.appendChild(btnCambiar);
+  head.appendChild(headBtns);
   wrap.appendChild(head);
+  if((state.notasEjercicio||{})[ej.nombre]){
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px;font-style:italic">📝 ${state.notasEjercicio[ej.nombre]}</p>`));
+  }
   if(ej.repsMin){
     wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:10px">Objetivo: ${ej.repsMin}-${ej.repsMax} reps</p>`));
   }
 
   wrap.appendChild(renderTimerBox(ej));
+  wrap.appendChild(renderStatsRow(ej));
+  const hayCalOApx = ej.sets.some(s=>s.tipo==='Calentamiento' || s.tipo==='Aproximación');
+  if(hayCalOApx){
+    const btnRecalc = el(`<button class="btn btn-full" style="margin-bottom:12px;font-size:12px">Recalcular calentamiento/aproximación según peso de hoy</button>`);
+    btnRecalc.onclick = ()=>{
+      const normales = ej.sets.filter(s=>s.tipo==='Normal' && s.peso>0);
+      if(!normales.length){ alert('Cargá primero el peso de al menos una serie Normal.'); return; }
+      const pesoBase = normales[0].peso;
+      ej.sets.forEach(s=>{
+        if(s.tipo==='Calentamiento') s.peso = Math.round(pesoBase*0.5);
+        if(s.tipo==='Aproximación') s.peso = Math.round(pesoBase*0.75);
+      });
+      saveState(); render();
+    };
+    wrap.appendChild(btnRecalc);
+  }
 
   const gridHead = el(`<div style="display:flex;gap:6px;font-size:11px;color:var(--text-muted);margin-bottom:4px;padding:0 2px"><span style="width:16px"></span><span style="flex:1;text-align:center">Kg</span><span style="flex:1;text-align:center">Reps${ej.repsMin?` (${ej.repsMin}-${ej.repsMax})`:''}</span></div>`);
   wrap.appendChild(gridHead);
@@ -492,7 +517,7 @@ function screenSesion(){
   wrap.appendChild(tip);
 
   const addBtn = el(`<button class="btn btn-full">${icon('plus')} Agregar serie</button>`);
-  addBtn.onclick = ()=>{ const last = ej.sets[ej.sets.length-1]; ej.sets.push({peso:last.peso,reps:last.reps,tipo:'Normal',done:false}); saveState(); render(); };
+  addBtn.onclick = ()=>{ const last = ej.sets[ej.sets.length-1]; ej.sets.push({peso:last.peso,reps:last.reps,tipo:'Normal',done:false,rpe:null}); saveState(); render(); };
   wrap.appendChild(addBtn);
 
   if(debeSubirPeso(ej)){
@@ -516,6 +541,111 @@ function screenSesion(){
   finBtn.onclick = finalizarSesion;
   wrap.appendChild(finBtn);
 
+  return wrap;
+}
+
+/* ---------- discos, 1RM y notas ---------- */
+const DISCOS_DISPONIBLES = [25,20,15,10,5,2.5,1.25];
+function calcularDiscos(pesoTotal, pesoBarra){
+  pesoBarra = pesoBarra || 20;
+  let porLado = (pesoTotal - pesoBarra) / 2;
+  if(porLado <= 0) return { discos: [], sobra: 0, imposible: pesoTotal < pesoBarra };
+  const usados = [];
+  DISCOS_DISPONIBLES.forEach(d=>{
+    while(porLado >= d - 0.001){ usados.push(d); porLado -= d; }
+  });
+  return { discos: usados, sobra: Math.round(porLado*100)/100, imposible: false };
+}
+function estimar1RM(peso, reps){
+  if(!peso || !reps) return 0;
+  return Math.round(peso * (1 + reps/30));
+}
+function mejorSetActual(ej){
+  let mejor = null;
+  ej.sets.filter(s=>s.tipo==='Normal' && s.done && s.peso>0).forEach(s=>{
+    const e1rm = estimar1RM(s.peso, s.reps);
+    if(!mejor || e1rm > mejor.e1rm) mejor = {peso:s.peso, reps:s.reps, e1rm};
+  });
+  return mejor;
+}
+
+function renderStatsRow(ej){
+  const wrap = el(`<div style="display:flex;gap:8px;margin-bottom:14px"></div>`);
+  const mejor = mejorSetActual(ej);
+  const stat1RM = el(`<div class="card" style="flex:1;padding:8px;text-align:center"><p class="muted" style="font-size:10px;margin-bottom:2px">1RM estimado hoy</p><p style="font-size:15px;font-weight:600">${mejor ? mejor.e1rm+' kg' : '—'}</p></div>`);
+  wrap.appendChild(stat1RM);
+  const btnDiscos = el(`<button class="card" style="flex:1;padding:8px;text-align:center;background:var(--surface)"><p class="muted" style="font-size:10px;margin-bottom:2px">Calculadora</p><p style="font-size:15px;font-weight:600">🏋️ Discos</p></button>`);
+  btnDiscos.onclick = ()=>{ setSessionView('discos'); render(); };
+  wrap.appendChild(btnDiscos);
+  return wrap;
+}
+function ses_global_focus(){ return state.activeSession.focusIdx; }
+
+function screenDiscos(){
+  const ses = state.activeSession;
+  const ej = ses.exercises[ses.focusIdx];
+  const mejor = mejorSetActual(ej);
+  const pesoSugerido = mejor ? mejor.peso : (ej.sets.find(s=>s.tipo==='Normal')||{}).peso || 0;
+  const wrap = document.createElement('div');
+  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
+  back.onclick = ()=>{ setSessionView('activa'); render(); };
+  wrap.appendChild(back);
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Calculadora de discos</h2>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Peso total en la barra (kg)</p>`));
+  const pesoInput = el(`<input type="text" inputmode="decimal" class="set-input" style="width:100%;margin-bottom:8px" value="${pesoSugerido}">`);
+  pesoInput.onfocus = ()=>pesoInput.select();
+  wrap.appendChild(pesoInput);
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Peso de la barra (kg)</p>`));
+  const barraInput = el(`<input type="text" inputmode="decimal" class="set-input" style="width:100%;margin-bottom:12px" value="${state.pesoBarra||20}">`);
+  barraInput.onfocus = ()=>barraInput.select();
+  wrap.appendChild(barraInput);
+  const resultBox = el(`<div class="card"></div>`);
+  wrap.appendChild(resultBox);
+  function actualizar(){
+    const pt = parseFloat(pesoInput.value.replace(',','.'))||0;
+    const pb = parseFloat(barraInput.value.replace(',','.'))||20;
+    state.pesoBarra = pb; saveState();
+    const r = calcularDiscos(pt, pb);
+    if(r.imposible){
+      resultBox.innerHTML = `<p class="muted" style="font-size:13px">El peso total es menor a la barra sola.</p>`;
+      return;
+    }
+    if(!r.discos.length){
+      resultBox.innerHTML = `<p style="font-size:14px">Solo la barra, sin discos.</p>`;
+      return;
+    }
+    const conteo = {};
+    r.discos.forEach(d=>{ conteo[d]=(conteo[d]||0)+1; });
+    resultBox.innerHTML = `<p class="secondary" style="font-size:13px;margin-bottom:8px">Por lado (x2 para el total):</p>` +
+      Object.keys(conteo).sort((a,b)=>b-a).map(d=>`<p style="font-size:16px;margin-bottom:4px">● ${d} kg × ${conteo[d]}</p>`).join('') +
+      (r.sobra>0 ? `<p class="muted" style="font-size:12px;margin-top:6px">No se puede llegar exacto, sobran ${r.sobra} kg por lado.</p>` : '');
+  }
+  pesoInput.oninput = actualizar; barraInput.oninput = actualizar;
+  actualizar();
+  return wrap;
+}
+
+/* ---------- notas por ejercicio ---------- */
+let notasEjIdx = null;
+function screenNotas(){
+  const ses = state.activeSession;
+  const ej = ses.exercises[notasEjIdx];
+  const wrap = document.createElement('div');
+  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
+  back.onclick = ()=>{ setSessionView('activa'); render(); };
+  wrap.appendChild(back);
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Notas: ${ej.nombre}</h2>`));
+  const actual = (state.notasEjercicio||{})[ej.nombre] || '';
+  wrap.appendChild(el(`<textarea id="notaText" placeholder="Ej: técnica, sensaciones, ajustes...">${actual}</textarea>`));
+  const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar nota</button>`);
+  btn.onclick = ()=>{
+    state.notasEjercicio = state.notasEjercicio || {};
+    state.notasEjercicio[ej.nombre] = document.getElementById('notaText').value;
+    saveState();
+    setSessionView('activa');
+    render();
+  };
+  wrap.appendChild(btn);
   return wrap;
 }
 
@@ -583,6 +713,10 @@ function renderSetRow(ej,s,si){
   const tipoSel = el(`<select class="set-select" style="flex:1">${['Calentamiento','Aproximación','Normal','Fallo'].map(t=>`<option ${t===s.tipo?'selected':''}>${t}</option>`).join('')}</select>`);
   tipoSel.onchange = ()=>{ s.tipo = tipoSel.value; saveState(); };
   botRow.appendChild(tipoSel);
+
+  const rpeSel = el(`<select class="set-select" style="width:64px" aria-label="RPE (esfuerzo percibido)"><option value="">RPE</option>${[6,7,8,9,10].map(r=>`<option value="${r}" ${s.rpe==r?'selected':''}>${r}</option>`).join('')}</select>`);
+  rpeSel.onchange = ()=>{ s.rpe = rpeSel.value ? parseInt(rpeSel.value) : null; saveState(); };
+  botRow.appendChild(rpeSel);
 
   const actionBtn = document.createElement('button');
   actionBtn.style.cssText = 'padding:0;width:28px;height:28px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;background:var(--surface)';
@@ -801,6 +935,66 @@ function screenHistorial(){
   exportBox.appendChild(copyBtn);
   exportBox.appendChild(msg);
   wrap.appendChild(exportBox);
+
+  const csvBtn = el(`<button class="btn btn-full" style="margin-top:8px">${icon('copy')} Copiar como CSV (Excel/Sheets)</button>`);
+  const csvMsg = el(`<div style="font-size:12px;color:var(--success);margin-top:6px;text-align:center"></div>`);
+  csvBtn.onclick = ()=>{
+    const csv = generarCSV();
+    navigator.clipboard.writeText(csv).then(()=>{ csvMsg.textContent = 'CSV copiado, pegalo en una hoja de cálculo'; })
+      .catch(()=>{ csvMsg.textContent = 'No se pudo copiar.'; });
+  };
+  wrap.appendChild(csvBtn);
+  wrap.appendChild(csvMsg);
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:20px 0 8px">Progreso por ejercicio</p>`));
+  const nombres = [...new Set(state.history.flatMap(h=>h.exercises.map(e=>e.nombre)))].sort();
+  if(!nombres.length){
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px">Todavía no hay datos suficientes.</p>`));
+  } else {
+    const sel = el(`<select class="set-select" style="width:100%;margin-bottom:12px">${nombres.map(n=>`<option ${n===state.chartEjercicio?'selected':''}>${n}</option>`).join('')}</select>`);
+    sel.onchange = ()=>{ state.chartEjercicio = sel.value; saveState(); render(); };
+    wrap.appendChild(sel);
+    const ejSel = state.chartEjercicio || nombres[0];
+    wrap.appendChild(renderChartEjercicio(ejSel));
+  }
+
+  return wrap;
+}
+
+function renderChartEjercicio(nombre){
+  const puntos = [];
+  state.history.forEach(h=>{
+    const ex = h.exercises.find(e=>e.nombre===nombre);
+    if(!ex) return;
+    let mejor1rm = 0, mejorPeso = 0;
+    ex.sets.filter(s=>s.tipo==='Normal').forEach(s=>{
+      const e1rm = estimar1RM(s.peso, s.reps);
+      if(e1rm > mejor1rm){ mejor1rm = e1rm; mejorPeso = s.peso; }
+    });
+    if(mejor1rm>0) puntos.push({fecha: new Date(h.fecha), peso: mejorPeso, e1rm: mejor1rm});
+  });
+  if(puntos.length < 2){
+    return el(`<p class="muted" style="font-size:12px">Necesitás al menos 2 sesiones de este ejercicio para ver el gráfico.</p>`);
+  }
+  const w = 320, h = 140, pad = 24;
+  const maxV = Math.max(...puntos.map(p=>p.e1rm)) * 1.1;
+  const minV = Math.min(...puntos.map(p=>p.e1rm)) * 0.9;
+  const xStep = (w - pad*2) / (puntos.length - 1);
+  const yFor = v => h - pad - ((v - minV) / (maxV - minV || 1)) * (h - pad*2);
+  const coords = puntos.map((p,i)=>`${pad + i*xStep},${yFor(p.e1rm)}`);
+  const path = 'M ' + coords.join(' L ');
+  const dots = puntos.map((p,i)=>`<circle cx="${pad + i*xStep}" cy="${yFor(p.e1rm)}" r="3" fill="var(--accent)"></circle>`).join('');
+  const first = puntos[0], last = puntos[puntos.length-1];
+  const svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto">
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+  const wrap = el(`<div class="card"></div>`);
+  wrap.innerHTML = svg;
+  wrap.appendChild(el(`<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-top:4px">
+    <span>${first.fecha.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})}: ${first.e1rm}kg 1RM</span>
+    <span>${last.fecha.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})}: ${last.e1rm}kg 1RM</span>
+  </div>`));
   return wrap;
 }
 
@@ -810,12 +1004,27 @@ function generarInforme(){
     const fecha = new Date(h.fecha).toLocaleDateString('es-AR');
     out += `\n${fecha} - ${h.dayName}\n`;
     h.exercises.forEach(e=>{
-      const setsStr = e.sets.map(s=>`${s.peso}kg x ${s.reps} (${s.tipo})`).join(', ');
+      const setsStr = e.sets.map(s=>`${s.peso}kg x ${s.reps}${s.rpe?` RPE${s.rpe}`:''} (${s.tipo})`).join(', ');
       out += `  ${e.nombre}: ${setsStr}\n`;
+      const nota = (state.notasEjercicio||{})[e.nombre];
+      if(nota) out += `    Nota: ${nota}\n`;
     });
     out += `  Volumen total: ${Math.round(h.volumenTotal)} kg | Duración: ${Math.round(h.duracionSeg/60)} min\n`;
   });
   return out;
+}
+
+function generarCSV(){
+  const rows = [['Fecha','Dia','Ejercicio','Serie','Peso','Reps','Tipo','RPE']];
+  state.history.forEach(h=>{
+    const fecha = new Date(h.fecha).toLocaleDateString('es-AR');
+    h.exercises.forEach(e=>{
+      e.sets.forEach((s,i)=>{
+        rows.push([fecha, h.dayName, e.nombre, i+1, s.peso, s.reps, s.tipo, s.rpe||'']);
+      });
+    });
+  });
+  return rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
 }
 
 /* ---------- init ---------- */
