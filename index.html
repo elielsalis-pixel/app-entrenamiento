@@ -476,7 +476,7 @@ function screenSesion(){
 
   wrap.appendChild(renderTimerBox(ej));
 
-  const gridHead = el(`<div class="set-grid" style="font-size:11px;color:var(--text-muted)"><span>#</span><span>Kg</span><span>Reps${ej.repsMin?` (${ej.repsMin}-${ej.repsMax})`:''}</span><span>Tipo</span><span></span></div>`);
+  const gridHead = el(`<div style="display:flex;gap:6px;font-size:11px;color:var(--text-muted);margin-bottom:4px;padding:0 2px"><span style="width:16px"></span><span style="flex:1;text-align:center">Kg</span><span style="flex:1;text-align:center">Reps${ej.repsMin?` (${ej.repsMin}-${ej.repsMax})`:''}</span></div>`);
   wrap.appendChild(gridHead);
 
   ej.sets.forEach((s,si)=>{
@@ -550,25 +550,37 @@ function renderTimerBox(ej){
 }
 
 function renderSetRow(ej,s,si){
-  const row = el(`<div class="set-grid"></div>`);
-  row.appendChild(el(`<span style="font-size:12px;color:var(--text-muted)">${si+1}</span>`));
+  const row = document.createElement('div');
+  row.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px';
 
-  const pesoIn = el(`<input type="text" inputmode="decimal" class="set-input" value="${s.peso}">`);
-  pesoIn.oninput = ()=>{ s.peso = parseFloat(pesoIn.value.replace(',','.'))||0; saveState(); };
-  pesoIn.onfocus = ()=>{ pesoIn.select(); };
-  row.appendChild(pesoIn);
+  const topRow = el(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"></div>`);
+  topRow.appendChild(el(`<span style="font-size:12px;color:var(--text-muted);width:16px">${si+1}</span>`));
 
-  const repsIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" value="${s.reps}">`);
-  repsIn.oninput = ()=>{ s.reps = parseInt(repsIn.value)||0; saveState(); };
-  repsIn.onfocus = ()=>{ repsIn.select(); };
-  row.appendChild(repsIn);
+  function stepperCell(label, value, onChange){
+    const wrap = el(`<div style="flex:1;display:flex;align-items:center;gap:4px"></div>`);
+    const minus = el(`<button aria-label="Restar ${label}" style="width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:16px;line-height:1">−</button>`);
+    const input = el(`<input type="text" inputmode="${label==='peso'?'decimal':'numeric'}" pattern="${label==='peso'?'':'[0-9]*'}" class="set-input" style="text-align:center" value="${value}">`);
+    const plus = el(`<button aria-label="Sumar ${label}" style="width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:16px;line-height:1">+</button>`);
+    input.onfocus = ()=>{ input.select(); };
+    input.oninput = ()=>{ onChange(label==='peso' ? (parseFloat(input.value.replace(',','.'))||0) : (parseInt(input.value)||0)); saveState(); };
+    minus.onclick = ()=>{ const step = label==='peso'?2.5:1; const nv = Math.max(0, (label==='peso'?s.peso:s.reps) - step); onChange(nv); input.value = nv; saveState(); };
+    plus.onclick = ()=>{ const step = label==='peso'?2.5:1; const nv = (label==='peso'?s.peso:s.reps) + step; onChange(nv); input.value = nv; saveState(); };
+    wrap.appendChild(minus); wrap.appendChild(input); wrap.appendChild(plus);
+    return wrap;
+  }
 
-  const tipoSel = el(`<select class="set-select">${['Calentamiento','Aproximación','Normal','Fallo'].map(t=>`<option ${t===s.tipo?'selected':''}>${t}</option>`).join('')}</select>`);
+  topRow.appendChild(stepperCell('peso', s.peso, v=>{ s.peso = v; }));
+  topRow.appendChild(stepperCell('reps', s.reps, v=>{ s.reps = v; }));
+  row.appendChild(topRow);
+
+  const botRow = el(`<div style="display:flex;align-items:center;gap:6px"></div>`);
+  botRow.appendChild(el(`<span style="width:16px"></span>`));
+  const tipoSel = el(`<select class="set-select" style="flex:1">${['Calentamiento','Aproximación','Normal','Fallo'].map(t=>`<option ${t===s.tipo?'selected':''}>${t}</option>`).join('')}</select>`);
   tipoSel.onchange = ()=>{ s.tipo = tipoSel.value; saveState(); };
-  row.appendChild(tipoSel);
+  botRow.appendChild(tipoSel);
 
   const actionBtn = document.createElement('button');
-  actionBtn.style.cssText = 'padding:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;background:var(--surface)';
+  actionBtn.style.cssText = 'padding:0;width:28px;height:28px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;background:var(--surface)';
   actionBtn.innerHTML = s.deleteMode ? icon('trash') : (s.done ? icon('check') : icon('circle'));
   actionBtn.style.color = s.deleteMode ? 'var(--danger)' : (s.done ? 'var(--success)' : 'var(--text-muted)');
 
@@ -595,7 +607,8 @@ function renderSetRow(ej,s,si){
   actionBtn.onmousedown = startHold; actionBtn.onmouseup = cancelHold; actionBtn.onmouseleave = cancelHold;
   actionBtn.ontouchstart = startHold; actionBtn.ontouchend = cancelHold;
   actionBtn.onclick = click;
-  row.appendChild(actionBtn);
+  botRow.appendChild(actionBtn);
+  row.appendChild(botRow);
 
   return row;
 }
