@@ -349,6 +349,19 @@ function screenRutina(){
   };
   wrap.appendChild(btnResetTodo);
 
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Notificaciones</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Para que suene y vibre aunque estés en otra app durante el descanso. En algunos celus con ahorro de batería agresivo puede no funcionar si pasa mucho tiempo en segundo plano.</p>`));
+  const notifStatus = window.Notification ? Notification.permission : 'unsupported';
+  if(notifStatus==='granted'){
+    wrap.appendChild(el(`<p style="font-size:13px;margin-bottom:16px">✅ Notificaciones activadas</p>`));
+  } else if(notifStatus==='unsupported'){
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:16px">Tu navegador no soporta notificaciones.</p>`));
+  } else {
+    const notifBtn = el(`<button class="btn btn-full" style="margin-bottom:16px">Activar notificaciones</button>`);
+    notifBtn.onclick = ()=>{ Notification.requestPermission().then(()=>render()); };
+    wrap.appendChild(notifBtn);
+  }
+
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Sonido al terminar el descanso</p>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Por defecto suena un beep. Podés subir varios audios cortos (mp3, m4a, ogg) — si hay más de uno, suena uno al azar cada vez.</p>`));
   state.customSounds = state.customSounds || [];
@@ -672,12 +685,12 @@ function screenSesion(){
   const nav = el(`<div style="display:flex;gap:8px;margin-top:16px"></div>`);
   if(ses.focusIdx>0){
     const prev = el(`<button class="btn" style="flex:1">${icon('chevleft')} Anterior</button>`);
-    prev.onclick = ()=>{ ses.focusIdx--; saveState(); render(); };
+    prev.onclick = ()=>{ clearTimeout(notifTimeoutId); ses.focusIdx--; saveState(); render(); };
     nav.appendChild(prev);
   }
   if(ses.focusIdx<ses.exercises.length-1){
     const next = el(`<button class="btn" style="flex:1">Siguiente ${icon('chevright')}</button>`);
-    next.onclick = ()=>{ ses.focusIdx++; saveState(); render(); mostrarMotivacion(frase(FRASES_SIGUIENTE)); };
+    next.onclick = ()=>{ clearTimeout(notifTimeoutId); ses.focusIdx++; saveState(); render(); mostrarMotivacion(frase(FRASES_SIGUIENTE)); };
     nav.appendChild(next);
   }
   wrap.appendChild(nav);
@@ -820,7 +833,7 @@ function renderTimerBox(ej){
       <p style="font-size:26px;font-weight:600;margin-bottom:6px;font-family:monospace">${fmtTime(ej.tiempoRestante)}</p>`;
     const controls = el(`<div style="display:flex;gap:8px;justify-content:center"></div>`);
     const resetBtn = el(`<button class="btn" style="font-size:12px;padding:5px 12px">Reiniciar</button>`);
-    resetBtn.onclick = ()=>{ ej.tiempoRestante = ej.descanso; ej.timerCorriendo=false; ej.timerFinEn=null; clearInterval(restInterval); render(); };
+    resetBtn.onclick = ()=>{ ej.tiempoRestante = ej.descanso; ej.timerCorriendo=false; ej.timerFinEn=null; clearInterval(restInterval); clearTimeout(notifTimeoutId); render(); };
     const editBtn = el(`<button class="btn" style="font-size:12px;padding:5px 8px">${icon('edit')}</button>`);
     editBtn.onclick = ()=>{ ej.editandoTimer = true; render(); };
     controls.appendChild(resetBtn); controls.appendChild(editBtn);
@@ -946,14 +959,25 @@ function mostrarMotivacion(texto){
   setTimeout(()=>{ toast.remove(); }, 2200);
 }
 
+let notifTimeoutId = null;
+
 function iniciarTimer(ej){
   clearInterval(restInterval);
+  clearTimeout(notifTimeoutId);
   ej.timerCorriendo = true;
   ej.timerFinEn = Date.now() + ej.descanso*1000;
   ej.tiempoRestante = ej.descanso;
   ej.timerCompletado = false;
   tickTimer(ej);
   restInterval = setInterval(()=>tickTimer(ej), 1000);
+
+  if(window.Notification && Notification.permission==='granted'){
+    notifTimeoutId = setTimeout(()=>{
+      try{
+        new Notification('Descanso terminado', { body: `Volvé a ${ej.nombre}`, vibrate: [200,100,200], tag: 'descanso-timer', renotify: true });
+      } catch(e){}
+    }, ej.descanso*1000);
+  }
 }
 
 function tickTimer(ej){
