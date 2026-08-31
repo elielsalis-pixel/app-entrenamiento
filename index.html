@@ -820,7 +820,7 @@ function renderTimerBox(ej){
       <p style="font-size:26px;font-weight:600;margin-bottom:6px;font-family:monospace">${fmtTime(ej.tiempoRestante)}</p>`;
     const controls = el(`<div style="display:flex;gap:8px;justify-content:center"></div>`);
     const resetBtn = el(`<button class="btn" style="font-size:12px;padding:5px 12px">Reiniciar</button>`);
-    resetBtn.onclick = ()=>{ ej.tiempoRestante = ej.descanso; ej.timerCorriendo=false; render(); };
+    resetBtn.onclick = ()=>{ ej.tiempoRestante = ej.descanso; ej.timerCorriendo=false; ej.timerFinEn=null; clearInterval(restInterval); render(); };
     const editBtn = el(`<button class="btn" style="font-size:12px;padding:5px 8px">${icon('edit')}</button>`);
     editBtn.onclick = ()=>{ ej.editandoTimer = true; render(); };
     controls.appendChild(resetBtn); controls.appendChild(editBtn);
@@ -949,19 +949,34 @@ function mostrarMotivacion(texto){
 function iniciarTimer(ej){
   clearInterval(restInterval);
   ej.timerCorriendo = true;
+  ej.timerFinEn = Date.now() + ej.descanso*1000;
   ej.tiempoRestante = ej.descanso;
-  restInterval = setInterval(()=>{
-    if(!ej.timerCorriendo) return;
-    ej.tiempoRestante--;
-    if(ej.tiempoRestante <= 0){
-      ej.tiempoRestante = 0; ej.timerCorriendo=false; clearInterval(restInterval);
-      beep();
-      mostrarMotivacion(frase(FRASES_TIMER));
-    }
-    const label = document.querySelector('.timerbox p:nth-of-type(2)');
-    if(label) label.textContent = fmtTime(ej.tiempoRestante);
-  },1000);
+  ej.timerCompletado = false;
+  tickTimer(ej);
+  restInterval = setInterval(()=>tickTimer(ej), 1000);
 }
+
+function tickTimer(ej){
+  if(!ej.timerCorriendo) return;
+  const restanteMs = ej.timerFinEn - Date.now();
+  ej.tiempoRestante = Math.max(0, Math.ceil(restanteMs/1000));
+  if(restanteMs <= 0 && !ej.timerCompletado){
+    ej.timerCompletado = true;
+    ej.timerCorriendo = false;
+    clearInterval(restInterval);
+    beep();
+    mostrarMotivacion(frase(FRASES_TIMER));
+  }
+  const label = document.querySelector('.timerbox p:nth-of-type(2)');
+  if(label) label.textContent = fmtTime(ej.tiempoRestante);
+}
+
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'visible' && state.activeSession){
+    const ej = state.activeSession.exercises[state.activeSession.focusIdx];
+    if(ej && ej.timerCorriendo){ tickTimer(ej); render(); }
+  }
+});
 
 /* ---------- sustituir ejercicio ---------- */
 function screenSustituir(){
