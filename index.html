@@ -996,7 +996,9 @@ function finalizarSesion(){
   ses.exercises.forEach(e=>{
     e.sets.forEach(s=>{ volumenTotal += s.peso*s.reps; });
     if(e.prLogrado) prCount++;
-    state.lastByExercise[e.nombre] = {peso: e.sets[e.sets.length-1].peso, reps: e.sets[e.sets.length-1].reps};
+    const normalesHechas = e.sets.filter(s=>s.tipo==='Normal' && s.done && s.peso>0);
+    const referencia = normalesHechas.length ? normalesHechas[normalesHechas.length-1] : e.sets[e.sets.length-1];
+    state.lastByExercise[e.nombre] = {peso: referencia.peso, reps: referencia.reps};
   });
 
   const prevSame = [...state.history].reverse().find(h=>h.dayName===ses.dayName);
