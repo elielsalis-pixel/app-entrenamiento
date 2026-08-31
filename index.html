@@ -974,12 +974,25 @@ function screenSustituir(){
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:4px">Sustituir</p>`));
   wrap.appendChild(el(`<h2 style="margin-bottom:16px">${ej.nombre}</h2>`));
   (ej.alternativas||[]).forEach(alt=>{
-    const card = el(`<div class="alt-card">
+    const card = el(`<div class="alt-card" style="flex-direction:column;align-items:stretch;gap:8px">
       <div><p style="font-weight:600;font-size:14px">${alt.nombre}</p><p class="muted" style="font-size:12px">${alt.detalle||''}</p></div>
     </div>`);
-    const useBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">Usar</button>`);
-    useBtn.onclick = ()=>{ ej.nombre = alt.nombre; setSessionView('activa'); render(); };
-    card.appendChild(useBtn);
+    const btnRow = el(`<div style="display:flex;gap:8px"></div>`);
+    const btnHoy = el(`<button class="btn" style="flex:1;font-size:12px;padding:6px 10px">Solo hoy</button>`);
+    btnHoy.onclick = ()=>{ ej.nombre = alt.nombre; setSessionView('activa'); render(); };
+    const btnSiempre = el(`<button class="btn" style="flex:1;font-size:12px;padding:6px 10px">Para siempre</button>`);
+    btnSiempre.onclick = ()=>{
+      if(confirm(`¿Reemplazar "${ej.nombre}" por "${alt.nombre}" en la rutina para todas las semanas?`)){
+        const day = state.routine.days[ses.dayIdx % state.routine.days.length];
+        const orig = day.exercises.find(x=>x.nombre===ej.nombre);
+        if(orig) orig.nombre = alt.nombre;
+        ej.nombre = alt.nombre;
+        saveState();
+        setSessionView('activa'); render();
+      }
+    };
+    btnRow.appendChild(btnHoy); btnRow.appendChild(btnSiempre);
+    card.appendChild(btnRow);
     wrap.appendChild(card);
   });
   if(!(ej.alternativas||[]).length){
