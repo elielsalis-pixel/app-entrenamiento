@@ -98,10 +98,5 @@ function normalizar(str){
 
 function buscarImagen(nombreEjercicio){
   const n = normalizar(nombreEjercicio);
-  if(EXERCISE_IMAGE_MAP[n]) return EXERCISE_IMAGE_MAP[n];
-  // busca coincidencia parcial (por si el nombre tiene palabras extra)
-  for(const key in EXERCISE_IMAGE_MAP){
-    if(n.includes(key) || key.includes(n)) return EXERCISE_IMAGE_MAP[key];
-  }
-  return null;
+  return EXERCISE_IMAGE_MAP[n] || null;
 }

@@ -600,35 +600,44 @@ function screenSesion(){
   });
   wrap.appendChild(labels);
 
-  const imgPath = (window.buscarImagen && buscarImagen(ej.nombre)) || (state.customImages && state.customImages[ej.nombre]);
+  const customImg = state.customImages && state.customImages[ej.nombre];
+  const autoImg = window.buscarImagen && buscarImagen(ej.nombre);
+  const imgPath = customImg || autoImg;
   const photoBox = el(`<div class="exphoto"></div>`);
   if(imgPath){
     photoBox.innerHTML = `<img src="${imgPath}" alt="${ej.nombre}">`;
   } else {
     photoBox.innerHTML = icon('photo');
-    const addPhotoBtn = el(`<label style="position:absolute" class="muted"></label>`);
   }
   wrap.appendChild(photoBox);
+
+  const addRow = el(`<div style="display:flex;align-items:center;gap:8px;margin:-4px 0 10px"></div>`);
   if(!imgPath){
-    const addRow = el(`<div style="margin:-4px 0 10px"></div>`);
-    const addLabel = el(`<p class="muted" style="font-size:11px;margin-bottom:4px">No hay foto para este ejercicio</p>`);
-    const addBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">Agregar foto</button>`);
-    const fileInput = el(`<input type="file" accept="image/*" style="display:none">`);
-    addBtn.onclick = ()=> fileInput.click();
-    fileInput.onchange = (e)=>{
-      const file = e.target.files[0];
-      if(!file) return;
-      const reader = new FileReader();
-      reader.onload = ()=>{
-        state.customImages = state.customImages || {};
-        state.customImages[ej.nombre] = reader.result;
-        saveState(); render();
-      };
-      reader.readAsDataURL(file);
-    };
-    addRow.appendChild(addLabel); addRow.appendChild(addBtn); addRow.appendChild(fileInput);
-    wrap.appendChild(addRow);
+    addRow.appendChild(el(`<p class="muted" style="font-size:11px;flex:1">No hay foto para este ejercicio</p>`));
+  } else {
+    addRow.appendChild(el(`<p class="muted" style="font-size:11px;flex:1">${customImg ? 'Tu foto' : 'Foto sugerida automáticamente'}</p>`));
   }
+  const addBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">${imgPath ? 'Cambiar foto' : 'Agregar foto'}</button>`);
+  const fileInput = el(`<input type="file" accept="image/*" style="display:none">`);
+  addBtn.onclick = ()=> fileInput.click();
+  fileInput.onchange = (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      state.customImages = state.customImages || {};
+      state.customImages[ej.nombre] = reader.result;
+      saveState(); render();
+    };
+    reader.readAsDataURL(file);
+  };
+  addRow.appendChild(addBtn); addRow.appendChild(fileInput);
+  if(customImg){
+    const quitarBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">Quitar mi foto</button>`);
+    quitarBtn.onclick = ()=>{ delete state.customImages[ej.nombre]; saveState(); render(); };
+    addRow.appendChild(quitarBtn);
+  }
+  wrap.appendChild(addRow);
 
   const head = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px"><h2>${ej.nombre}</h2></div>`);
   const headBtns = el(`<div style="display:flex;gap:6px"></div>`);
