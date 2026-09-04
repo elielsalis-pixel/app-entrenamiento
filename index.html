@@ -617,9 +617,9 @@ function screenSesion(){
   } else {
     addRow.appendChild(el(`<p class="muted" style="font-size:11px;flex:1">${customImg ? 'Tu foto' : 'Foto sugerida automáticamente'}</p>`));
   }
-  const addBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">${imgPath ? 'Cambiar foto' : 'Agregar foto'}</button>`);
+  const addFotoBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">${imgPath ? 'Cambiar foto' : 'Agregar foto'}</button>`);
   const fileInput = el(`<input type="file" accept="image/*" style="display:none">`);
-  addBtn.onclick = ()=> fileInput.click();
+  addFotoBtn.onclick = ()=> fileInput.click();
   fileInput.onchange = (e)=>{
     const file = e.target.files[0];
     if(!file) return;
@@ -631,7 +631,7 @@ function screenSesion(){
     };
     reader.readAsDataURL(file);
   };
-  addRow.appendChild(addBtn); addRow.appendChild(fileInput);
+  addRow.appendChild(addFotoBtn); addRow.appendChild(fileInput);
   if(customImg){
     const quitarBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">Quitar mi foto</button>`);
     quitarBtn.onclick = ()=>{ delete state.customImages[ej.nombre]; saveState(); render(); };
