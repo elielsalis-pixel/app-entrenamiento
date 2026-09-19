@@ -232,6 +232,7 @@ function render(){
   else if(currentTab==='sesion') s.appendChild(screenSesionWrap());
   else if(currentTab==='rutina') s.appendChild(screenRutina());
   else if(currentTab==='historial') s.appendChild(screenHistorial());
+  else if(currentTab==='extra') s.appendChild(screenExtra());
 }
 
 /* ---------- pantalla: sin rutina cargada ---------- */
@@ -520,6 +521,10 @@ function screenInicio(){
   card.appendChild(btnStart);
   card.appendChild(btnSkip);
   wrap.appendChild(card);
+
+  const btnExtra = el(`<button class="btn btn-full" style="margin-bottom:16px">💪 Cardio / Agarre (doble turno)</button>`);
+  btnExtra.onclick = ()=>{ currentTab = 'extra'; render(); };
+  wrap.appendChild(btnExtra);
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:8px">Semana ${week} de 12</p>`));
   state.routine.days.forEach((d,i)=>{
@@ -1173,6 +1178,180 @@ function screenResumen(){
 }
 
 /* ---------- historial ---------- */
+/* ---------- actividad extra: cardio y agarre ---------- */
+let extraVista = 'lista'; // lista | cardio | agarre
+let agarreSeries = [];
+
+function screenExtra(){
+  state.actividadesExtra = state.actividadesExtra || [];
+  const wrap = document.createElement('div');
+  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
+  back.onclick = ()=>{ extraVista='lista'; currentTab='inicio'; render(); };
+  wrap.appendChild(back);
+
+  if(extraVista==='cardio'){ wrap.appendChild(formCardio()); return wrap; }
+  if(extraVista==='agarre'){ wrap.appendChild(formAgarre()); return wrap; }
+
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Cardio / Agarre</h2>`));
+  const btnRow = el(`<div style="display:flex;gap:8px;margin-bottom:16px"></div>`);
+  const btnCardio = el(`<button class="btn" style="flex:1">🏃 Registrar cardio</button>`);
+  btnCardio.onclick = ()=>{ extraVista='cardio'; render(); };
+  const btnAgarre = el(`<button class="btn" style="flex:1">✊ Registrar agarre</button>`);
+  btnAgarre.onclick = ()=>{ agarreSeries = [{valor:'', unidad:'seg'}]; extraVista='agarre'; render(); };
+  btnRow.appendChild(btnCardio); btnRow.appendChild(btnAgarre);
+  wrap.appendChild(btnRow);
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:8px">Registros recientes</p>`));
+  if(!state.actividadesExtra.length){
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px">Todavía no registraste nada acá.</p>`));
+  }
+  [...state.actividadesExtra].reverse().slice(0,15).forEach(a=>{
+    const fecha = new Date(a.fecha).toLocaleDateString('es-AR',{day:'2-digit',month:'short'});
+    let linea;
+    if(a.tipo==='cardio'){
+      const medicion = a.medicionTipo==='fc' ? `FC prom. ${a.medicionValor}` : a.medicionValor;
+      linea = `🏃 ${fecha} · ${a.modalidad} · ${a.duracionMin} min · ${medicion}`;
+    } else {
+      const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
+      linea = `✊ ${fecha} · ${a.ejercicio} · ${seriesStr}`;
+    }
+    const row = el(`<div class="hist-row"><span style="font-size:13px">${linea}</span></div>`);
+    const delBtn = el(`<button aria-label="Borrar" style="padding:0;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted)">${icon('trash')}</button>`);
+    delBtn.onclick = ()=>{
+      const idx = state.actividadesExtra.indexOf(a);
+      if(idx>-1 && confirm('¿Borrar este registro?')){ state.actividadesExtra.splice(idx,1); saveState(); render(); }
+    };
+    row.appendChild(delBtn);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function formCardio(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Registrar cardio</h2>`));
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
+  const fechaIn = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:10px" value="${new Date().toISOString().slice(0,10)}">`);
+  wrap.appendChild(fechaIn);
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Duración (minutos)</p>`));
+  const durIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-bottom:10px" placeholder="30">`);
+  durIn.onfocus = ()=>durIn.select();
+  wrap.appendChild(durIn);
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Modalidad</p>`));
+  const modIn = el(`<input type="text" class="set-input" style="width:100%;margin-bottom:10px" placeholder="Cinta, elíptica, bici, caminata..." value="${state.ultimaModalidadCardio||''}">`);
+  wrap.appendChild(modIn);
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Medición</p>`));
+  const medTipo = el(`<select class="set-select" style="width:100%;margin-bottom:8px">
+    <option value="sensacion">Sensación subjetiva</option>
+    <option value="fc">Frecuencia cardíaca promedio</option>
+  </select>`);
+  wrap.appendChild(medTipo);
+
+  const medValorBox = el(`<div></div>`);
+  wrap.appendChild(medValorBox);
+
+  function renderMedValor(){
+    medValorBox.innerHTML = '';
+    if(medTipo.value==='fc'){
+      const fcIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-bottom:12px" placeholder="Ej: 130">`);
+      fcIn.onfocus = ()=>fcIn.select();
+      medValorBox.appendChild(fcIn);
+    } else {
+      const sel = el(`<select class="set-select" style="width:100%;margin-bottom:12px">
+        <option>Fácil, puedo hablar normal</option>
+        <option selected>Moderado, hablo con esfuerzo (Zona 2 real)</option>
+        <option>Difícil, casi no puedo hablar</option>
+      </select>`);
+      medValorBox.appendChild(sel);
+    }
+  }
+  medTipo.onchange = renderMedValor;
+  renderMedValor();
+
+  const guardarBtn = el(`<button class="btn btn-primary btn-full">Guardar</button>`);
+  guardarBtn.onclick = ()=>{
+    const duracionMin = parseInt(durIn.value)||0;
+    const modalidad = modIn.value.trim();
+    if(!duracionMin || !modalidad){ alert('Completá duración y modalidad.'); return; }
+    const medValorInput = medValorBox.querySelector('input,select');
+    state.actividadesExtra = state.actividadesExtra || [];
+    state.actividadesExtra.push({
+      tipo:'cardio', fecha: new Date(fechaIn.value).toISOString(),
+      duracionMin, modalidad,
+      medicionTipo: medTipo.value, medicionValor: medValorInput.value
+    });
+    state.ultimaModalidadCardio = modalidad;
+    saveState();
+    extraVista='lista'; render();
+  };
+  wrap.appendChild(guardarBtn);
+  return wrap;
+}
+
+function formAgarre(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Registrar ejercicio de agarre</h2>`));
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
+  const fechaIn = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:10px" value="${new Date().toISOString().slice(0,10)}">`);
+  wrap.appendChild(fechaIn);
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Ejercicio (podés cambiarlo cuando quieras)</p>`));
+  const ejIn = el(`<input type="text" class="set-input" style="width:100%;margin-bottom:12px" placeholder="Dead hang, caminata del granjero, etc." value="${state.ultimoEjercicioAgarre||'Dead hang'}">`);
+  wrap.appendChild(ejIn);
+
+  const seriesBox = el(`<div></div>`);
+  wrap.appendChild(seriesBox);
+
+  function renderSeries(){
+    seriesBox.innerHTML = '';
+    agarreSeries.forEach((s,i)=>{
+      const row = el(`<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px"></div>`);
+      row.appendChild(el(`<span style="font-size:12px;color:var(--text-muted);width:16px">${i+1}</span>`));
+      const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="Valor" value="${s.valor}">`);
+      valorIn.onfocus = ()=>valorIn.select();
+      valorIn.oninput = ()=>{ s.valor = valorIn.value; };
+      const unidadSel = el(`<select class="set-select" style="width:80px">${['seg','kg','m','min','reps'].map(u=>`<option ${u===s.unidad?'selected':''}>${u}</option>`).join('')}</select>`);
+      unidadSel.onchange = ()=>{ s.unidad = unidadSel.value; };
+      const delBtn = el(`<button aria-label="Borrar serie" style="width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface)">${icon('trash')}</button>`);
+      delBtn.onclick = ()=>{ if(agarreSeries.length>1){ agarreSeries.splice(i,1); renderSeries(); } };
+      row.appendChild(valorIn); row.appendChild(unidadSel); row.appendChild(delBtn);
+      seriesBox.appendChild(row);
+    });
+  }
+  renderSeries();
+
+  const addSerieBtn = el(`<button class="btn btn-full" style="margin-bottom:8px">${icon('plus')} Agregar serie/intento</button>`);
+  addSerieBtn.onclick = ()=>{ agarreSeries.push({valor:'', unidad: agarreSeries[agarreSeries.length-1].unidad}); renderSeries(); };
+  wrap.appendChild(addSerieBtn);
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px;margin-top:8px">Nota (opcional)</p>`));
+  const notaIn = el(`<textarea id="notaAgarre" style="min-height:60px" placeholder="Ej: combinado con caminata de 20m"></textarea>`);
+  wrap.appendChild(notaIn);
+
+  const guardarBtn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar</button>`);
+  guardarBtn.onclick = ()=>{
+    const ejercicio = ejIn.value.trim();
+    if(!ejercicio){ alert('Poné el nombre del ejercicio.'); return; }
+    const seriesLimpias = agarreSeries.filter(s=>s.valor!=='' && s.valor!=null).map(s=>({valor:parseFloat(String(s.valor).replace(',','.'))||s.valor, unidad:s.unidad}));
+    if(!seriesLimpias.length){ alert('Cargá al menos un valor.'); return; }
+    state.actividadesExtra = state.actividadesExtra || [];
+    state.actividadesExtra.push({
+      tipo:'agarre', fecha: new Date(fechaIn.value).toISOString(),
+      ejercicio, series: seriesLimpias, nota: notaIn.value.trim()
+    });
+    state.ultimoEjercicioAgarre = ejercicio;
+    saveState();
+    extraVista='lista'; render();
+  };
+  wrap.appendChild(guardarBtn);
+  return wrap;
+}
+
 function screenHistorial(){
   const wrap = document.createElement('div');
   wrap.appendChild(el(`<h2 style="margin-bottom:12px">Historial</h2>`));
@@ -1273,6 +1452,22 @@ function generarInforme(){
     });
     out += `  Volumen total: ${Math.round(h.volumenTotal)} kg | Duración: ${Math.round(h.duracionSeg/60)} min\n`;
   });
+
+  const extra = state.actividadesExtra || [];
+  if(extra.length){
+    out += `\n\n=== ACTIVIDADES EXTRA (cardio / agarre — fuera de la rutina de 5 días) ===\n`;
+    extra.forEach(a=>{
+      const fecha = new Date(a.fecha).toLocaleDateString('es-AR');
+      if(a.tipo==='cardio'){
+        const medicion = a.medicionTipo==='fc' ? `FC promedio ${a.medicionValor}` : `Sensación: ${a.medicionValor}`;
+        out += `${fecha} - Cardio (${a.modalidad}) - ${a.duracionMin} min - ${medicion}\n`;
+      } else {
+        const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
+        out += `${fecha} - Agarre (${a.ejercicio}) - series: ${seriesStr}${a.nota?` - Nota: ${a.nota}`:''}\n`;
+      }
+    });
+  }
+
   return out;
 }
 
@@ -1286,7 +1481,23 @@ function generarCSV(){
       });
     });
   });
-  return rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  let csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+
+  const extra = state.actividadesExtra || [];
+  if(extra.length){
+    const rows2 = [['Fecha','Tipo','Detalle1','Detalle2','Detalle3','Nota']];
+    extra.forEach(a=>{
+      const fecha = new Date(a.fecha).toLocaleDateString('es-AR');
+      if(a.tipo==='cardio'){
+        rows2.push([fecha, 'Cardio', a.modalidad, `${a.duracionMin} min`, a.medicionTipo==='fc'?`FC ${a.medicionValor}`:a.medicionValor, '']);
+      } else {
+        rows2.push([fecha, 'Agarre', a.ejercicio, a.series.map(s=>`${s.valor}${s.unidad}`).join(' / '), '', a.nota||'']);
+      }
+    });
+    csv += '\n\n' + rows2.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  }
+
+  return csv;
 }
 
 /* ---------- init ---------- */
