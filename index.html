@@ -124,6 +124,37 @@ function abrirSpotify(){ window.location.href = 'spotify:'; setTimeout(()=>{ win
 function abrirYoutube(){ window.location.href = 'youtube:'; setTimeout(()=>{ window.open('https://youtube.com','_blank'); },800); }
 
 /* ---------- parser de rutina ---------- */
+function todosLosNombresDeEjercicios(){
+  const nombres = new Set();
+  (state.routine ? state.routine.days : []).forEach(d=>d.exercises.forEach(e=>nombres.add(e.nombre)));
+  return [...nombres];
+}
+
+function aplicarAjustes(texto){
+  const resultado = [];
+  const nombresRutina = todosLosNombresDeEjercicios();
+  texto.split('\n').forEach(line=>{
+    line = line.trim();
+    if(!line) return;
+    const m = line.match(/^AJUSTE:\s*(.+?)\s*\|\s*peso\s*([\d.,]+)/i);
+    if(!m){
+      resultado.push({ok:false, texto:`No se pudo leer: "${line}"`});
+      return;
+    }
+    const nombrePedido = m[1].trim();
+    const peso = parseFloat(m[2].replace(',','.'));
+    const nombreReal = nombresRutina.find(n => n.toLowerCase() === nombrePedido.toLowerCase());
+    if(!nombreReal){
+      resultado.push({ok:false, texto:`No encontré "${nombrePedido}" en tu rutina actual — revisá el nombre exacto.`});
+      return;
+    }
+    const actual = state.lastByExercise[nombreReal] || {reps: 10};
+    state.lastByExercise[nombreReal] = {peso, reps: actual.reps};
+    resultado.push({ok:true, texto:`✓ ${nombreReal} → ${peso}kg`});
+  });
+  return resultado;
+}
+
 function parseRoutine(text){
   const days = [];
   let current = null;
@@ -406,6 +437,21 @@ function screenRutina(){
   const motToggle = el(`<button class="btn btn-full">${state.motivacionOn===false?'Activar frases motivadoras':'Desactivar frases motivadoras'}</button>`);
   motToggle.onclick = ()=>{ state.motivacionOn = state.motivacionOn===false ? true : false; saveState(); render(); };
   wrap.appendChild(motToggle);
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Ajustes sugeridos</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Pegá acá los ajustes de peso que te dé el Project de Entrenamiento (formato AJUSTE: nombre | peso X) — actualiza el peso de referencia para la próxima vez que hagas cada ejercicio, sin tener que esperar a entrenarlo.</p>`));
+  wrap.appendChild(el(`<textarea id="ajustesPaste" placeholder="AJUSTE: Prensa de piernas | peso 52
+AJUSTE: Press banca plano | peso 45"></textarea>`));
+  const btnAjustes = el(`<button class="btn btn-full" style="margin-top:8px;margin-bottom:8px">Aplicar ajustes</button>`);
+  const ajustesMsg = el(`<div style="font-size:12px;margin-bottom:16px"></div>`);
+  btnAjustes.onclick = ()=>{
+    const txt = document.getElementById('ajustesPaste').value;
+    const resultado = aplicarAjustes(txt);
+    ajustesMsg.innerHTML = resultado.map(r=>`<p style="color:${r.ok?'var(--success)':'var(--danger)'};margin-bottom:2px">${r.texto}</p>`).join('');
+    if(resultado.some(r=>r.ok)){ document.getElementById('ajustesPaste').value=''; saveState(); }
+  };
+  wrap.appendChild(btnAjustes);
+  wrap.appendChild(ajustesMsg);
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Compartir la app</p>`));
   const appUrl = window.location.origin + window.location.pathname;
