@@ -439,6 +439,23 @@ function screenRutina(){
   motToggle.onclick = ()=>{ state.motivacionOn = state.motivacionOn===false ? true : false; saveState(); render(); };
   wrap.appendChild(motToggle);
 
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Diagnóstico — datos guardados por ejercicio</p>`));
+  const diagBtn = el(`<button class="btn btn-full" style="margin-bottom:8px">${state.mostrarDiagnostico?'Ocultar':'Ver'} datos guardados</button>`);
+  diagBtn.onclick = ()=>{ state.mostrarDiagnostico = !state.mostrarDiagnostico; saveState(); render(); };
+  wrap.appendChild(diagBtn);
+  if(state.mostrarDiagnostico){
+    const diagBox = el(`<div class="card" style="margin-bottom:16px;font-size:12px"></div>`);
+    const nombres = todosLosNombresDeEjercicios();
+    if(!nombres.length){
+      diagBox.appendChild(el(`<p class="muted">Sin ejercicios en la rutina actual.</p>`));
+    }
+    nombres.forEach(n=>{
+      const dato = state.lastByExercise[n];
+      diagBox.appendChild(el(`<p style="margin-bottom:4px"><b>${n}</b>: ${dato ? `${dato.peso}kg × ${dato.reps} reps` : '<span class="muted">sin dato guardado</span>'}</p>`));
+    });
+    wrap.appendChild(diagBox);
+  }
+
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Ajustes sugeridos</p>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Pegá acá los ajustes de peso que te dé el Project de Entrenamiento (formato AJUSTE: nombre | peso X) — actualiza el peso de referencia para la próxima vez que hagas cada ejercicio, sin tener que esperar a entrenarlo.</p>`));
   wrap.appendChild(el(`<textarea id="ajustesPaste" placeholder="AJUSTE: Prensa de piernas | peso 52
