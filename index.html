@@ -93,6 +93,18 @@ function loadState(){
 let state = loadState();
 function saveState(){ localStorage.setItem('entrenoState', JSON.stringify(state)); }
 
+function registrarCambioPeso(nombreEjercicio, pesoNuevo, repsNuevo, origen){
+  state.logCambios = state.logCambios || [];
+  const anterior = state.lastByExercise[nombreEjercicio];
+  state.logCambios.push({
+    fecha: new Date().toISOString(),
+    ejercicio: nombreEjercicio,
+    pesoAnterior: anterior ? anterior.peso : null,
+    pesoNuevo, repsNuevo, origen
+  });
+  if(state.logCambios.length > 200) state.logCambios = state.logCambios.slice(-200);
+}
+
 /* ---------- utilidades ---------- */
 function fmtTime(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60; return (m<10?'0':'')+m+':'+(s<10?'0':'')+s; }
 function weekNumber(){ return Math.min(12, Math.floor(state.slot/5)+1); }
@@ -149,6 +161,7 @@ function aplicarAjustes(texto){
       return;
     }
     const actual = state.lastByExercise[nombreReal] || {reps: 10};
+    registrarCambioPeso(nombreReal, peso, actual.reps, 'Ajuste sugerido (bloque AJUSTE)');
     state.lastByExercise[nombreReal] = {peso, reps: actual.reps};
     resultado.push({ok:true, texto:`✓ ${nombreReal} → ${peso}kg`});
   });
@@ -454,6 +467,22 @@ function screenRutina(){
       diagBox.appendChild(el(`<p style="margin-bottom:4px"><b>${n}</b>: ${dato ? `${dato.peso}kg × ${dato.reps} reps` : '<span class="muted">sin dato guardado</span>'}</p>`));
     });
     wrap.appendChild(diagBox);
+
+    const btnLog = el(`<button class="btn btn-full" style="margin-bottom:8px">${state.mostrarLog?'Ocultar':'Ver'} historial de cambios (últimos 30)</button>`);
+    btnLog.onclick = ()=>{ state.mostrarLog = !state.mostrarLog; saveState(); render(); };
+    wrap.appendChild(btnLog);
+    if(state.mostrarLog){
+      const logBox = el(`<div class="card" style="margin-bottom:16px;font-size:11px"></div>`);
+      const log = state.logCambios || [];
+      if(!log.length){
+        logBox.appendChild(el(`<p class="muted">Sin cambios registrados todavía.</p>`));
+      }
+      [...log].reverse().slice(0,30).forEach(l=>{
+        const fecha = new Date(l.fecha).toLocaleString('es-AR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+        logBox.appendChild(el(`<p style="margin-bottom:4px">${fecha} · <b>${l.ejercicio}</b>: ${l.pesoAnterior!=null?l.pesoAnterior+'kg → ':''}${l.pesoNuevo}kg <span class="muted">(${l.origen})</span></p>`));
+      });
+      wrap.appendChild(logBox);
+    }
   }
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Ajustes sugeridos</p>`));
@@ -1127,6 +1156,7 @@ function finalizarSesion(){
     if(e.prLogrado) prCount++;
     const normalesHechas = e.sets.filter(s=>s.tipo==='Normal' && s.done && s.peso>0);
     const referencia = normalesHechas.length ? normalesHechas[normalesHechas.length-1] : e.sets[e.sets.length-1];
+    registrarCambioPeso(e.nombre, referencia.peso, referencia.reps, `Fin de sesión (${ses.dayName})`);
     state.lastByExercise[e.nombre] = {peso: referencia.peso, reps: referencia.reps};
   });
 
