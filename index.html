@@ -84,7 +84,8 @@ function loadState(){
   return {
     routine: null,          // {days:[{name, exercises:[{nombre,descanso,series,alternativas:[]}]}]}
     history: [],            // sesiones completas
-    lastByExercise: {},     // nombre -> {peso,reps}
+    lastByExercise: {},     // nombre -> {peso,reps}  (fallback general, compatibilidad)
+    lastSetsByDayExercise: {}, // "dia::nombre" -> [{peso,reps,tipo}, ...] (serie por serie, por día)
     prByExercise: {},       // nombre -> mejor volumen (peso*reps) alcanzado
     slot: 0,                // 0..∞, ronda de 5 dias (entrenado o saltado)
     activeSession: null     // sesion en curso
@@ -92,6 +93,21 @@ function loadState(){
 }
 let state = loadState();
 function saveState(){ localStorage.setItem('entrenoState', JSON.stringify(state)); }
+
+/* ---------- migración: recuperar series por día+ejercicio desde el historial ---------- */
+function migrarSetsPorDia(){
+  if(state.migratedSetsBackfill) return;
+  state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
+  (state.history||[]).forEach(record=>{
+    (record.exercises||[]).forEach(e=>{
+      const key = record.dayName + '::' + e.nombre;
+      state.lastSetsByDayExercise[key] = (e.sets||[]).map(s=>({peso:s.peso, reps:s.reps, tipo:s.tipo}));
+    });
+  });
+  state.migratedSetsBackfill = true;
+  saveState();
+}
+migrarSetsPorDia();
 
 function registrarCambioPeso(nombreEjercicio, pesoNuevo, repsNuevo, origen){
   state.logCambios = state.logCambios || [];
@@ -163,6 +179,15 @@ function aplicarAjustes(texto){
     const actual = state.lastByExercise[nombreReal] || {reps: 10};
     registrarCambioPeso(nombreReal, peso, actual.reps, 'Ajuste sugerido (bloque AJUSTE)');
     state.lastByExercise[nombreReal] = {peso, reps: actual.reps};
+    // actualizar también las series guardadas por día para este ejercicio (todas las series "Normal")
+    state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
+    Object.keys(state.lastSetsByDayExercise).forEach(key=>{
+      if(key.endsWith('::'+nombreReal)){
+        state.lastSetsByDayExercise[key] = state.lastSetsByDayExercise[key].map(s=>
+          s.tipo==='Normal' ? {...s, peso} : s
+        );
+      }
+    });
     resultado.push({ok:true, texto:`✓ ${nombreReal} → ${peso}kg`});
   });
   return resultado;
@@ -458,13 +483,20 @@ function screenRutina(){
   wrap.appendChild(diagBtn);
   if(state.mostrarDiagnostico){
     const diagBox = el(`<div class="card" style="margin-bottom:16px;font-size:12px"></div>`);
-    const nombres = todosLosNombresDeEjercicios();
-    if(!nombres.length){
+    const days = state.routine ? state.routine.days : [];
+    if(!days.length){
       diagBox.appendChild(el(`<p class="muted">Sin ejercicios en la rutina actual.</p>`));
     }
-    nombres.forEach(n=>{
-      const dato = state.lastByExercise[n];
-      diagBox.appendChild(el(`<p style="margin-bottom:4px"><b>${n}</b>: ${dato ? `${dato.peso}kg × ${dato.reps} reps` : '<span class="muted">sin dato guardado</span>'}</p>`));
+    days.forEach(d=>{
+      diagBox.appendChild(el(`<p style="margin:10px 0 4px"><b>— ${d.name} —</b></p>`));
+      d.exercises.forEach(e=>{
+        const key = d.name + '::' + e.nombre;
+        const sets = (state.lastSetsByDayExercise||{})[key];
+        const txt = sets && sets.length
+          ? sets.map(s=>`${s.peso}kg×${s.reps} (${s.tipo})`).join(' · ')
+          : '<span class="muted">sin dato guardado</span>';
+        diagBox.appendChild(el(`<p style="margin-bottom:4px">${e.nombre}: ${txt}</p>`));
+      });
     });
     wrap.appendChild(diagBox);
 
@@ -626,21 +658,57 @@ function empezarSesion(dayIdx){
     exercises: day.exercises.map(e=>({
       nombre: e.nombre, descanso: (state.customDescanso && state.customDescanso[e.nombre]) || e.descanso,
       alternativas: e.alternativas, repsMin: e.repsMin, repsMax: e.repsMax,
-      sets: seedSets(e)
+      sets: seedSets(e, day.name)
     }))
   };
   state.resumenCelebrado = false;
   setSessionView('activa');
   setTab('sesion');
 }
-function seedSets(e){
-  const last = state.lastByExercise[e.nombre];
-  const repsTarget = last ? last.reps : Math.round(((e.repsMin||8)+(e.repsMax||12))/2);
-  const pesoTarget = last ? last.peso : 0;
-  const sets = [];
+function seedSets(e, dayName){
   const nCal = e.calentamiento || 0;
   const nApx = e.aproximacion || 0;
   const nNorm = e.series || 3;
+  const repsDefault = Math.round(((e.repsMin||8)+(e.repsMax||12))/2);
+
+  const key = dayName + '::' + e.nombre;
+  const saved = (state.lastSetsByDayExercise || {})[key];
+
+  if(saved && saved.length){
+    const porTipo = {Calentamiento:[], 'Aproximación':[], Normal:[]};
+    saved.forEach(s=>{ if(porTipo[s.tipo]) porTipo[s.tipo].push(s); });
+    const normalBase = porTipo.Normal.length ? porTipo.Normal[0].peso : 0;
+
+    function construir(tipo, n, fallbackPeso){
+      const arr = porTipo[tipo];
+      const out = [];
+      for(let i=0;i<n;i++){
+        if(arr.length){
+          // si hay más series hoy que la vez pasada, las extra copian la última serie conocida
+          const s = arr[Math.min(i, arr.length-1)];
+          out.push({peso: s.peso, reps: s.reps, tipo, done:false, rpe:null});
+        } else {
+          out.push({peso: fallbackPeso, reps: repsDefault, tipo, done:false, rpe:null});
+        }
+      }
+      return out;
+    }
+
+    const sets = [
+      ...construir('Calentamiento', nCal, Math.round(normalBase*0.5)),
+      ...construir('Aproximación', nApx, Math.round(normalBase*0.75)),
+      ...construir('Normal', nNorm, normalBase)
+    ];
+    if(sets.length===0) sets.push({peso: normalBase, reps: repsDefault, tipo:'Normal', done:false, rpe:null});
+    return sets;
+  }
+
+  // sin dato guardado para este día+ejercicio puntual (primera vez en este día, o dato viejo sin migrar):
+  // usamos el último valor general conocido del ejercicio como referencia uniforme, igual que antes.
+  const last = state.lastByExercise[e.nombre];
+  const repsTarget = last ? last.reps : repsDefault;
+  const pesoTarget = last ? last.peso : 0;
+  const sets = [];
   for(let i=0;i<nCal;i++) sets.push({peso: Math.round(pesoTarget*0.5), reps: repsTarget, tipo:'Calentamiento', done:false, rpe:null});
   for(let i=0;i<nApx;i++) sets.push({peso: Math.round(pesoTarget*0.75), reps: repsTarget, tipo:'Aproximación', done:false, rpe:null});
   for(let i=0;i<nNorm;i++) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false, rpe:null});
@@ -1158,6 +1226,11 @@ function finalizarSesion(){
     const referencia = normalesHechas.length ? normalesHechas[normalesHechas.length-1] : e.sets[e.sets.length-1];
     registrarCambioPeso(e.nombre, referencia.peso, referencia.reps, `Fin de sesión (${ses.dayName})`);
     state.lastByExercise[e.nombre] = {peso: referencia.peso, reps: referencia.reps};
+
+    // guardar la serie completa (peso, reps, tipo) de cada set, por día + ejercicio
+    state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
+    const key = ses.dayName + '::' + e.nombre;
+    state.lastSetsByDayExercise[key] = e.sets.map(s=>({peso:s.peso, reps:s.reps, tipo:s.tipo}));
   });
 
   const prevSame = [...state.history].reverse().find(h=>h.dayName===ses.dayName);
