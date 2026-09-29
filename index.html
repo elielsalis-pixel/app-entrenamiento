@@ -86,6 +86,7 @@ function loadState(){
     history: [],            // sesiones completas
     lastByExercise: {},     // nombre -> {peso,reps}  (fallback general, compatibilidad)
     lastSetsByDayExercise: {}, // "dia::nombre" -> [{peso,reps,tipo}, ...] (serie por serie, por día)
+    rutinaExtra: [],        // [{tipo:'cardio'|'abdominales'|'agarre', nombre, series, unidad}] plantilla del doble turno
     prByExercise: {},       // nombre -> mejor volumen (peso*reps) alcanzado
     slot: 0,                // 0..∞, ronda de 5 dias (entrenado o saltado)
     activeSession: null     // sesion en curso
@@ -339,6 +340,52 @@ function cargarRutina(){
   render();
 }
 
+/* ---------- rutina extra (cardio / abs / agarre): plantilla del doble turno ---------- */
+function parseRutinaExtra(texto){
+  const items = [];
+  texto.split('\n').forEach(line=>{
+    line = line.trim();
+    if(!line) return;
+    const m = line.match(/^(CARDIO|ABS|ABDOMINALES|AGARRE)\s*:\s*(.+)$/i);
+    if(!m) return;
+    const tipoRaw = m[1].toUpperCase();
+    const parts = m[2].split('|').map(p=>p.trim());
+    const nombre = parts[0];
+    let series = 3, unidad = null;
+    parts.slice(1).forEach(p=>{
+      const sm = p.match(/series\s*(\d+)/i);
+      const um = p.match(/unidad\s*(\w+)/i);
+      if(sm) series = parseInt(sm[1],10);
+      if(um) unidad = um[1].toLowerCase();
+    });
+    if(tipoRaw==='CARDIO'){
+      items.push({tipo:'cardio', nombre});
+    } else if(tipoRaw==='AGARRE'){
+      items.push({tipo:'agarre', nombre, series, unidad: unidad || 'seg'});
+    } else {
+      items.push({tipo:'abdominales', nombre, series, unidad: unidad || 'reps'});
+    }
+  });
+  return items;
+}
+function cargarRutinaExtra(){
+  const txt = document.getElementById('rutinaExtraPaste').value;
+  const parsed = parseRutinaExtra(txt);
+  if(!parsed.length){ alert('No se pudo leer. Revisá el formato.'); return; }
+  state.rutinaExtra = parsed;
+  saveState(); render();
+}
+function ultimoRegistroExtra(tipo, nombre){
+  const lst = state.actividadesExtra || [];
+  for(let i=lst.length-1;i>=0;i--){
+    const a = lst[i];
+    if(a.tipo!==tipo) continue;
+    if(tipo==='cardio' && a.modalidad===nombre) return a;
+    if(tipo!=='cardio' && a.ejercicio===nombre) return a;
+  }
+  return null;
+}
+
 let editDayIdx = null;
 let dayHoldTimeout = null;
 
@@ -398,6 +445,39 @@ function screenRutina(){
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina completa</button>`);
   btn.onclick = ()=>{ if(confirm('¿Reemplazar toda la rutina actual por esta nueva?')){ cargarRutina(); } };
   wrap.appendChild(btn);
+
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Rutina extra (cardio / abs / agarre)</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Definí una vez los ejercicios que sumás en el doble turno y después los registrás todos juntos con un toque desde "Cardio / Agarre / Abs", en vez de cargar cada uno suelto. Si un día hacés algo distinto, seguís pudiendo cargarlo como ejercicio suelto ahí mismo.</p>`));
+  if(state.rutinaExtra && state.rutinaExtra.length){
+    const listaExtraBox = el(`<div class="card" style="margin-bottom:10px;font-size:13px"></div>`);
+    state.rutinaExtra.forEach((it,i)=>{
+      const detalle = it.tipo==='cardio' ? 'Cardio' : `${it.tipo==='agarre'?'Agarre':'Abdominales'} · ${it.series} series (${it.unidad})`;
+      const row = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span>${it.nombre} <span class="muted">— ${detalle}</span></span></div>`);
+      const delBtn = el(`<button aria-label="Quitar" style="padding:0;width:22px;height:22px;border:none;background:transparent;color:var(--text-muted)">${icon('trash')}</button>`);
+      delBtn.onclick = ()=>{ state.rutinaExtra.splice(i,1); saveState(); render(); };
+      row.appendChild(delBtn);
+      listaExtraBox.appendChild(row);
+    });
+    wrap.appendChild(listaExtraBox);
+  }
+  const verFormatoExtraBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px;margin-bottom:10px">Ver formato</button>`);
+  const formatoExtraBox = el(`<div class="card" style="margin-bottom:10px;font-size:12px;line-height:1.6;display:none">
+    <p class="muted">Una línea por ejercicio: <b>CARDIO:</b>, <b>ABS:</b> o <b>AGARRE:</b> + nombre, y opcional <b> | series N | unidad X</b> (unidad: reps, seg o kg).</p>
+    <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:6px">CARDIO: Cinta
+ABS: Plancha | series 3
+ABS: Elevación de piernas | series 3 | unidad reps
+AGARRE: Dead hang | series 3 | unidad seg</p>
+    <p class="muted" style="margin-top:6px">Pegar esto reemplaza toda la rutina extra guardada.</p>
+  </div>`);
+  verFormatoExtraBtn.onclick = ()=>{ formatoExtraBox.style.display = formatoExtraBox.style.display==='none' ? 'block' : 'none'; };
+  wrap.appendChild(verFormatoExtraBtn);
+  wrap.appendChild(formatoExtraBox);
+  wrap.appendChild(el(`<textarea id="rutinaExtraPaste" placeholder="CARDIO: Cinta
+ABS: Plancha | series 3
+AGARRE: Dead hang | series 3"></textarea>`));
+  const btnExtraRutina = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar rutina extra</button>`);
+  btnExtraRutina.onclick = cargarRutinaExtra;
+  wrap.appendChild(btnExtraRutina);
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Reiniciar avance</p>`));
   const btnResetSemana = el(`<button class="btn btn-full" style="margin-bottom:8px">Reiniciar semana actual (volver al Día 1 de esta semana)</button>`);
@@ -1313,8 +1393,17 @@ function screenExtra(){
   if(extraVista==='cardio'){ wrap.appendChild(formCardio()); return wrap; }
   if(extraVista==='agarre'){ wrap.appendChild(formAgarre()); return wrap; }
   if(extraVista==='abdominales'){ wrap.appendChild(formAbdominales()); return wrap; }
+  if(extraVista==='sesionRutina'){ wrap.appendChild(formSesionRutinaExtra()); return wrap; }
 
   wrap.appendChild(el(`<h2 style="margin-bottom:12px">Cardio / Agarre / Abs</h2>`));
+
+  if(state.rutinaExtra && state.rutinaExtra.length){
+    const btnSesion = el(`<button class="btn btn-primary btn-full" style="margin-bottom:16px">▶ Registrar rutina extra de hoy</button>`);
+    btnSesion.onclick = ()=>{ extraVista='sesionRutina'; render(); };
+    wrap.appendChild(btnSesion);
+    wrap.appendChild(el(`<p class="secondary" style="font-size:12px;margin-bottom:8px">o cargar algo suelto</p>`));
+  }
+
   const btnRow = el(`<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap"></div>`);
   const btnCardio = el(`<button class="btn" style="flex:1;min-width:110px">🏃 Cardio</button>`);
   btnCardio.onclick = ()=>{ extraVista='cardio'; render(); };
@@ -1532,6 +1621,99 @@ function formAbdominales(){
       ejercicio, series: seriesLimpias, nota: notaIn.value.trim()
     });
     state.ultimoEjercicioAbs = ejercicio;
+    saveState();
+    extraVista='lista'; render();
+  };
+  wrap.appendChild(guardarBtn);
+  return wrap;
+}
+
+function formSesionRutinaExtra(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(el(`<h2 style="margin-bottom:4px">Rutina extra de hoy</h2>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:12px">Completá lo que hiciste hoy. Dejá en blanco lo que no hiciste — no se guarda si queda vacío.</p>`));
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
+  const fechaIn = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:16px" value="${new Date().toISOString().slice(0,10)}">`);
+  wrap.appendChild(fechaIn);
+
+  const itemsState = state.rutinaExtra.map(it=>{
+    if(it.tipo==='cardio'){
+      const ultimo = ultimoRegistroExtra('cardio', it.nombre);
+      return {def: it, duracion:'', medicionTipo: ultimo?ultimo.medicionTipo:'sensacion', medicionValor: ultimo?ultimo.medicionValor:'Moderado, hablo con esfuerzo (Zona 2 real)'};
+    }
+    const series = [];
+    for(let i=0;i<it.series;i++) series.push({valor:'', unidad: it.unidad});
+    return {def: it, series};
+  });
+
+  itemsState.forEach(item=>{
+    const it = item.def;
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '10px';
+    if(it.tipo==='cardio'){
+      card.appendChild(el(`<p style="font-weight:600;margin-bottom:8px">🏃 ${it.nombre}</p>`));
+      card.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Duración (min)</p>`));
+      const durIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-bottom:8px" placeholder="30">`);
+      durIn.onfocus = ()=>durIn.select();
+      durIn.oninput = ()=>{ item.duracion = durIn.value; };
+      card.appendChild(durIn);
+      const medSel = el(`<select class="set-select" style="width:100%">
+        <option value="sensacion:Fácil, puedo hablar normal">Fácil, puedo hablar normal</option>
+        <option value="sensacion:Moderado, hablo con esfuerzo (Zona 2 real)" selected>Moderado, hablo con esfuerzo (Zona 2 real)</option>
+        <option value="sensacion:Difícil, casi no puedo hablar">Difícil, casi no puedo hablar</option>
+        <option value="fc:">Frecuencia cardíaca promedio (escribir abajo)</option>
+      </select>`);
+      const fcIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-top:6px;display:none" placeholder="Ej: 130">`);
+      medSel.onchange = ()=>{
+        const [t,v] = medSel.value.split(':');
+        item.medicionTipo = t;
+        if(t==='fc'){ fcIn.style.display='block'; item.medicionValor = fcIn.value; }
+        else { fcIn.style.display='none'; item.medicionValor = v; }
+      };
+      fcIn.oninput = ()=>{ item.medicionValor = fcIn.value; };
+      card.appendChild(medSel);
+      card.appendChild(fcIn);
+    } else {
+      const emoji = it.tipo==='agarre' ? '✊' : '🔥';
+      card.appendChild(el(`<p style="font-weight:600;margin-bottom:8px">${emoji} ${it.nombre} <span class="muted" style="font-weight:400;font-size:12px">(${it.series} series · ${it.unidad})</span></p>`));
+      item.series.forEach((s,i)=>{
+        const row = el(`<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px"></div>`);
+        row.appendChild(el(`<span style="font-size:12px;color:var(--text-muted);width:16px">${i+1}</span>`));
+        const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="${it.unidad}">`);
+        valorIn.onfocus = ()=>valorIn.select();
+        valorIn.oninput = ()=>{ s.valor = valorIn.value; };
+        row.appendChild(valorIn);
+        card.appendChild(row);
+      });
+    }
+    wrap.appendChild(card);
+  });
+
+  const guardarBtn = el(`<button class="btn btn-primary btn-full" style="margin-top:8px">Guardar sesión de hoy</button>`);
+  guardarBtn.onclick = ()=>{
+    const fechaISO = new Date(fechaIn.value).toISOString();
+    let algo = false;
+    state.actividadesExtra = state.actividadesExtra || [];
+    itemsState.forEach(item=>{
+      const it = item.def;
+      if(it.tipo==='cardio'){
+        const duracionMin = parseInt(item.duracion)||0;
+        if(!duracionMin) return;
+        state.actividadesExtra.push({
+          tipo:'cardio', fecha: fechaISO, duracionMin, modalidad: it.nombre,
+          medicionTipo: item.medicionTipo, medicionValor: item.medicionValor
+        });
+        algo = true;
+      } else {
+        const seriesLimpias = item.series.filter(s=>s.valor!=='' && s.valor!=null).map(s=>({valor: parseFloat(String(s.valor).replace(',','.'))||s.valor, unidad: it.unidad}));
+        if(!seriesLimpias.length) return;
+        state.actividadesExtra.push({ tipo: it.tipo, fecha: fechaISO, ejercicio: it.nombre, series: seriesLimpias, nota:'' });
+        algo = true;
+      }
+    });
+    if(!algo){ alert('No cargaste ningún dato.'); return; }
     saveState();
     extraVista='lista'; render();
   };
