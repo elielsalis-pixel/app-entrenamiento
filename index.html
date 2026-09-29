@@ -2127,6 +2127,7 @@ function sugerenciasReemplazo(nombre, excluir){
       const dl = ORDEN_LUMBAR[x.lumbar] - ORDEN_LUMBAR[base.lumbar];
       if(dl > 0) p -= 3*dl;                          // y nunca por encima del original salvo que no quede otra
       if(x.nivel==='Avanzado') p -= 1;
+      if(x.propio) p += 3;                           // los agregaste vos: están en tu gimnasio
       return {x, p};
     })
     .sort((a,b)=>b.p - a.p)
@@ -2184,14 +2185,16 @@ function aplicarSustitucion(ej, nuevoNombre, paraSiempre){
 function opcionSustituto(ej, nombre, detalle){
   const x = buscarEjercicio(nombre);
   const card = el(`<div class="alt-card"></div>`);
-  card.appendChild(x ? filaEjercicio(x) : el(`<div class="item" style="padding:0;border:none;min-height:0"><span class="item-texto"><span style="display:block;font-weight:600">${esc(nombre)}</span>${detalle?`<span class="item-sub" style="display:block">${esc(detalle)}</span>`:''}</span></div>`));
-  if(x) card.firstChild.style.cssText = 'padding:0;border:none;min-height:0';
-  const fila = el(`<div class="fila2"></div>`);
-  fila.appendChild(boton('Solo hoy', 'btn-sm btn-full', ()=>aplicarSustitucion(ej, nombre, false)));
-  fila.appendChild(boton('Para siempre', 'btn-sm btn-full', ()=>{
+  // se muestra el nombre que se va a aplicar; la biblioteca solo aporta foto y datos
+  const fila = itemFila({iconoHtml: x ? miniaturaEjercicio(x, 44) : '', titulo: nombre, sub: x ? subtituloEjercicio(x) : (detalle||'')});
+  fila.style.cssText = 'padding:0;border:none;min-height:0';
+  card.appendChild(fila);
+  const botones = el(`<div class="fila2"></div>`);
+  botones.appendChild(boton('Solo hoy', 'btn-sm btn-full', ()=>aplicarSustitucion(ej, nombre, false)));
+  botones.appendChild(boton('Para siempre', 'btn-sm btn-full', ()=>{
     if(confirm(`¿Reemplazar "${ej.nombre}" por "${nombre}" en la rutina para todas las semanas?`)) aplicarSustitucion(ej, nombre, true);
   }));
-  card.appendChild(fila);
+  card.appendChild(botones);
   return card;
 }
 function screenSustituir(){
