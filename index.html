@@ -600,7 +600,7 @@ function screenInicio(){
   card.appendChild(btnSkip);
   wrap.appendChild(card);
 
-  const btnExtra = el(`<button class="btn btn-full" style="margin-bottom:16px">💪 Cardio / Agarre (doble turno)</button>`);
+  const btnExtra = el(`<button class="btn btn-full" style="margin-bottom:16px">💪 Cardio / Agarre / Abs (doble turno)</button>`);
   btnExtra.onclick = ()=>{ currentTab = 'extra'; render(); };
   wrap.appendChild(btnExtra);
 
@@ -1298,9 +1298,10 @@ function screenResumen(){
 }
 
 /* ---------- historial ---------- */
-/* ---------- actividad extra: cardio y agarre ---------- */
-let extraVista = 'lista'; // lista | cardio | agarre
+/* ---------- actividad extra: cardio, agarre y abdominales ---------- */
+let extraVista = 'lista'; // lista | cardio | agarre | abdominales
 let agarreSeries = [];
+let absSeries = [];
 
 function screenExtra(){
   state.actividadesExtra = state.actividadesExtra || [];
@@ -1311,14 +1312,17 @@ function screenExtra(){
 
   if(extraVista==='cardio'){ wrap.appendChild(formCardio()); return wrap; }
   if(extraVista==='agarre'){ wrap.appendChild(formAgarre()); return wrap; }
+  if(extraVista==='abdominales'){ wrap.appendChild(formAbdominales()); return wrap; }
 
-  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Cardio / Agarre</h2>`));
-  const btnRow = el(`<div style="display:flex;gap:8px;margin-bottom:16px"></div>`);
-  const btnCardio = el(`<button class="btn" style="flex:1">🏃 Registrar cardio</button>`);
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Cardio / Agarre / Abs</h2>`));
+  const btnRow = el(`<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap"></div>`);
+  const btnCardio = el(`<button class="btn" style="flex:1;min-width:110px">🏃 Cardio</button>`);
   btnCardio.onclick = ()=>{ extraVista='cardio'; render(); };
-  const btnAgarre = el(`<button class="btn" style="flex:1">✊ Registrar agarre</button>`);
+  const btnAgarre = el(`<button class="btn" style="flex:1;min-width:110px">✊ Agarre</button>`);
   btnAgarre.onclick = ()=>{ agarreSeries = [{valor:'', unidad:'seg'}]; extraVista='agarre'; render(); };
-  btnRow.appendChild(btnCardio); btnRow.appendChild(btnAgarre);
+  const btnAbs = el(`<button class="btn" style="flex:1;min-width:110px">🔥 Abdominales</button>`);
+  btnAbs.onclick = ()=>{ absSeries = [{valor:'', unidad:'reps'}]; extraVista='abdominales'; render(); };
+  btnRow.appendChild(btnCardio); btnRow.appendChild(btnAgarre); btnRow.appendChild(btnAbs);
   wrap.appendChild(btnRow);
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:8px">Registros recientes</p>`));
@@ -1331,6 +1335,9 @@ function screenExtra(){
     if(a.tipo==='cardio'){
       const medicion = a.medicionTipo==='fc' ? `FC prom. ${a.medicionValor}` : a.medicionValor;
       linea = `🏃 ${fecha} · ${a.modalidad} · ${a.duracionMin} min · ${medicion}`;
+    } else if(a.tipo==='abdominales'){
+      const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
+      linea = `🔥 ${fecha} · ${a.ejercicio} · ${seriesStr}`;
     } else {
       const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
       linea = `✊ ${fecha} · ${a.ejercicio} · ${seriesStr}`;
@@ -1472,6 +1479,66 @@ function formAgarre(){
   return wrap;
 }
 
+function formAbdominales(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Registrar abdominales</h2>`));
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
+  const fechaIn = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:10px" value="${new Date().toISOString().slice(0,10)}">`);
+  wrap.appendChild(fechaIn);
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Ejercicio (podés cambiarlo cuando quieras)</p>`));
+  const ejIn = el(`<input type="text" class="set-input" style="width:100%;margin-bottom:12px" placeholder="Crunch, plancha, elevación de piernas, etc." value="${state.ultimoEjercicioAbs||'Crunch'}">`);
+  wrap.appendChild(ejIn);
+
+  const seriesBox = el(`<div></div>`);
+  wrap.appendChild(seriesBox);
+
+  function renderSeries(){
+    seriesBox.innerHTML = '';
+    absSeries.forEach((s,i)=>{
+      const row = el(`<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px"></div>`);
+      row.appendChild(el(`<span style="font-size:12px;color:var(--text-muted);width:16px">${i+1}</span>`));
+      const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="Valor" value="${s.valor}">`);
+      valorIn.onfocus = ()=>valorIn.select();
+      valorIn.oninput = ()=>{ s.valor = valorIn.value; };
+      const unidadSel = el(`<select class="set-select" style="width:80px">${['reps','seg','kg'].map(u=>`<option ${u===s.unidad?'selected':''}>${u}</option>`).join('')}</select>`);
+      unidadSel.onchange = ()=>{ s.unidad = unidadSel.value; };
+      const delBtn = el(`<button aria-label="Borrar serie" style="width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface)">${icon('trash')}</button>`);
+      delBtn.onclick = ()=>{ if(absSeries.length>1){ absSeries.splice(i,1); renderSeries(); } };
+      row.appendChild(valorIn); row.appendChild(unidadSel); row.appendChild(delBtn);
+      seriesBox.appendChild(row);
+    });
+  }
+  renderSeries();
+
+  const addSerieBtn = el(`<button class="btn btn-full" style="margin-bottom:8px">${icon('plus')} Agregar serie</button>`);
+  addSerieBtn.onclick = ()=>{ absSeries.push({valor:'', unidad: absSeries[absSeries.length-1].unidad}); renderSeries(); };
+  wrap.appendChild(addSerieBtn);
+
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px;margin-top:8px">Nota (opcional)</p>`));
+  const notaIn = el(`<textarea id="notaAbs" style="min-height:60px" placeholder="Ej: 3 ejercicios distintos, circuito"></textarea>`);
+  wrap.appendChild(notaIn);
+
+  const guardarBtn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar</button>`);
+  guardarBtn.onclick = ()=>{
+    const ejercicio = ejIn.value.trim();
+    if(!ejercicio){ alert('Poné el nombre del ejercicio.'); return; }
+    const seriesLimpias = absSeries.filter(s=>s.valor!=='' && s.valor!=null).map(s=>({valor:parseFloat(String(s.valor).replace(',','.'))||s.valor, unidad:s.unidad}));
+    if(!seriesLimpias.length){ alert('Cargá al menos un valor.'); return; }
+    state.actividadesExtra = state.actividadesExtra || [];
+    state.actividadesExtra.push({
+      tipo:'abdominales', fecha: new Date(fechaIn.value).toISOString(),
+      ejercicio, series: seriesLimpias, nota: notaIn.value.trim()
+    });
+    state.ultimoEjercicioAbs = ejercicio;
+    saveState();
+    extraVista='lista'; render();
+  };
+  wrap.appendChild(guardarBtn);
+  return wrap;
+}
+
 function screenHistorial(){
   const wrap = document.createElement('div');
   wrap.appendChild(el(`<h2 style="margin-bottom:12px">Historial</h2>`));
@@ -1575,12 +1642,15 @@ function generarInforme(){
 
   const extra = state.actividadesExtra || [];
   if(extra.length){
-    out += `\n\n=== ACTIVIDADES EXTRA (cardio / agarre — fuera de la rutina de 5 días) ===\n`;
+    out += `\n\n=== ACTIVIDADES EXTRA (cardio / agarre / abdominales — fuera de la rutina de 5 días) ===\n`;
     extra.forEach(a=>{
       const fecha = new Date(a.fecha).toLocaleDateString('es-AR');
       if(a.tipo==='cardio'){
         const medicion = a.medicionTipo==='fc' ? `FC promedio ${a.medicionValor}` : `Sensación: ${a.medicionValor}`;
         out += `${fecha} - Cardio (${a.modalidad}) - ${a.duracionMin} min - ${medicion}\n`;
+      } else if(a.tipo==='abdominales'){
+        const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
+        out += `${fecha} - Abdominales (${a.ejercicio}) - series: ${seriesStr}${a.nota?` - Nota: ${a.nota}`:''}\n`;
       } else {
         const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
         out += `${fecha} - Agarre (${a.ejercicio}) - series: ${seriesStr}${a.nota?` - Nota: ${a.nota}`:''}\n`;
@@ -1610,6 +1680,8 @@ function generarCSV(){
       const fecha = new Date(a.fecha).toLocaleDateString('es-AR');
       if(a.tipo==='cardio'){
         rows2.push([fecha, 'Cardio', a.modalidad, `${a.duracionMin} min`, a.medicionTipo==='fc'?`FC ${a.medicionValor}`:a.medicionValor, '']);
+      } else if(a.tipo==='abdominales'){
+        rows2.push([fecha, 'Abdominales', a.ejercicio, a.series.map(s=>`${s.valor}${s.unidad}`).join(' / '), '', a.nota||'']);
       } else {
         rows2.push([fecha, 'Agarre', a.ejercicio, a.series.map(s=>`${s.valor}${s.unidad}`).join(' / '), '', a.nota||'']);
       }
