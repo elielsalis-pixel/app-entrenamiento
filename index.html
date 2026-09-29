@@ -297,8 +297,9 @@ function registrarCambioPeso(nombreEjercicio, pesoNuevo, repsNuevo, origen){
 
 /* ---------- utilidades ---------- */
 function fmtTime(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60; return (m<10?'0':'')+m+':'+(s<10?'0':'')+s; }
-function weekNumber(){ return Math.min(12, Math.floor(state.slot/5)+1); }
-function todayDayIndex(){ return state.slot % 5; }
+function diasPorSemana(){ return (state.routine && state.routine.days.length) || 5; }
+function weekNumber(){ return Math.min(12, Math.floor(state.slot/diasPorSemana())+1); }
+function todayDayIndex(){ return state.slot % diasPorSemana(); }
 function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstChild; }
 function icon(name){ return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`; }
 const ICONS = {
@@ -407,7 +408,7 @@ function parseRoutine(text){
 let currentTab = state.currentTab || 'inicio';
 let sessionView = state.sessionView || 'activa';
 
-function setTab(id){ currentTab = id; state.currentTab = id; saveState(); render(); }
+function setTab(id){ if(currentTab==='sesion' && id!=='sesion' && sessionView==='resumen') setSessionView('activa'); currentTab = id; state.currentTab = id; saveState(); render(); }
 function setSessionView(v){ sessionView = v; state.sessionView = v; saveState(); }
 const TABS = [
   {id:'inicio', label:'Inicio', icon:'home'},
@@ -510,6 +511,7 @@ function cargarRutina(){
   if(!parsed.days.length){ alert('No se pudo leer la rutina. Revisá el formato.'); return; }
   const reemplazando = !!state.routine;
   state.routine = parsed;
+  if(reemplazando && confirm('¿Arrancar la rutina nueva desde la Semana 1, Día 1?')){ state.slot = 0; state.showWeekBanner = null; }
   saveState();
   if(reemplazando){ currentTab='inicio'; state.currentTab='inicio'; }
   render();
@@ -747,7 +749,7 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
   const btnResetSemana = el(`<button class="btn btn-full" style="margin-bottom:8px">Reiniciar semana actual (volver al Día 1 de esta semana)</button>`);
   btnResetSemana.onclick = ()=>{
     if(confirm('¿Volver a repetir la semana actual desde el Día 1?')){
-      state.slot = Math.floor(state.slot/5)*5;
+      state.slot = Math.floor(state.slot/diasPorSemana())*diasPorSemana();
       state.showWeekBanner = null;
       saveState(); render();
     }
@@ -1050,6 +1052,7 @@ function debeSubirPeso(ej){
 }
 
 function screenSesionWrap(){
+  if(sessionView==='resumen' && state.lastResumen) return screenResumen();
   if(!state.activeSession){
     const dayIdx = todayDayIndex();
     return el(`<div style="text-align:center;padding:40px 0">
@@ -1199,7 +1202,7 @@ function screenSesion(){
   wrap.appendChild(nav);
 
   const finBtn = el(`<button class="btn btn-primary btn-full" style="margin-top:8px">Finalizar sesión</button>`);
-  finBtn.onclick = finalizarSesion;
+  finBtn.onclick = pedirFinalizar;
   wrap.appendChild(finBtn);
 
   return wrap;
@@ -1336,7 +1339,7 @@ function renderTimerBox(ej){
       <p style="font-size:26px;font-weight:600;margin-bottom:6px;font-family:monospace">${fmtTime(ej.tiempoRestante)}</p>`;
     const controls = el(`<div style="display:flex;gap:8px;justify-content:center"></div>`);
     const resetBtn = el(`<button class="btn" style="font-size:12px;padding:5px 12px">Reiniciar</button>`);
-    resetBtn.onclick = ()=>{ ej.tiempoRestante = ej.descanso; ej.timerCorriendo=false; ej.timerFinEn=null; clearInterval(restInterval); clearTimeout(notifTimeoutId); render(); };
+    resetBtn.onclick = ()=>{ ej.tiempoRestante = ej.descanso; ej.timerCorriendo=false; ej.timerFinEn=null; detenerTimer(); render(); };
     const editBtn = el(`<button class="btn" style="font-size:12px;padding:5px 8px">${icon('edit')}</button>`);
     editBtn.onclick = ()=>{ ej.editandoTimer = true; render(); };
     controls.appendChild(resetBtn); controls.appendChild(editBtn);
@@ -1510,8 +1513,8 @@ function mostrarMotivacion(texto){
 let notifTimeoutId = null;
 
 function iniciarTimer(ej){
-  clearInterval(restInterval);
-  clearTimeout(notifTimeoutId);
+  detenerTimer();
+  state.activeSession.exercises.forEach(o=>{ if(o!==ej && o.timerCorriendo){ o.timerCorriendo=false; o.tiempoRestante=o.descanso; } });
   ej.timerCorriendo = true;
   ej.timerFinEn = Date.now() + ej.descanso*1000;
   ej.tiempoRestante = ej.descanso;
@@ -1539,14 +1542,16 @@ function tickTimer(ej){
     beep();
     mostrarMotivacion(frase(FRASES_TIMER));
   }
+  const ses = state.activeSession;
+  if(!ses || ses.exercises[ses.focusIdx]!==ej) return; // en pantalla hay otro ejercicio
   const label = document.querySelector('.timerbox p:nth-of-type(2)');
   if(label) label.textContent = fmtTime(ej.tiempoRestante);
 }
 
 document.addEventListener('visibilitychange', ()=>{
   if(document.visibilityState === 'visible' && state.activeSession){
-    const ej = state.activeSession.exercises[state.activeSession.focusIdx];
-    if(ej && ej.timerCorriendo){ tickTimer(ej); render(); }
+    const ej = state.activeSession.exercises.find(e=>e.timerCorriendo);
+    if(ej){ tickTimer(ej); render(); }
   }
 });
 
@@ -1589,6 +1594,30 @@ function screenSustituir(){
 }
 
 /* ---------- finalizar sesión ---------- */
+function contarSeries(ses){
+  let pendientes = 0, hechas = 0;
+  ses.exercises.forEach(e=>{
+    if(e.cardio){ e.cardioHecho ? hechas++ : pendientes++; }
+    else e.sets.forEach(s=>{ s.done ? hechas++ : pendientes++; });
+  });
+  return {pendientes, hechas};
+}
+function detenerTimer(){ clearInterval(restInterval); clearTimeout(notifTimeoutId); }
+function pedirFinalizar(){
+  const {pendientes, hechas} = contarSeries(state.activeSession);
+  if(!hechas){
+    if(confirm('No marcaste ninguna serie. ¿Cerrar la sesión sin guardar nada?')){
+      detenerTimer(); state.activeSession = null; setSessionView('activa'); saveState(); setTab('inicio');
+    }
+    return;
+  }
+  if(pendientes && !confirm(`Te quedan ${pendientes} serie${pendientes>1?'s':''} sin marcar: no se van a guardar. ¿Finalizar igual?`)) return;
+  finalizarSesion();
+}
+// historial viejo: las series tienen done:true/false; solo cuentan las hechas
+function setsHechos(e){ return (e.sets||[]).filter(s=>s.done!==false); }
+function volumenDe(h){ return h.exercises.reduce((a,e)=>a+setsHechos(e).reduce((b,s)=>b+(s.peso||0)*(s.reps||0),0),0); }
+
 function finalizarSesionTarde(){
   const ses = state.activeSession;
   const duracionSeg = Math.round((Date.now()-ses.inicio)/1000);
@@ -1608,10 +1637,6 @@ function finalizarSesionTarde(){
     state.lastSetsByDayExercise[TARDE_KEY + '::' + e.nombre] = hechasLimpias;
     exercises.push({nombre:e.nombre, medida:e.medida, sets:hechasLimpias});
   });
-  if(!exercises.length){
-    if(!confirm('No marcaste nada como hecho. ¿Cerrar la sesión sin guardar?')) return;
-    state.activeSession = null; setSessionView('activa'); saveState(); setTab('inicio'); return;
-  }
   const record = {
     fecha: new Date().toISOString(), turno:'tarde', dayName: 'Turno tarde: ' + ses.rutinaNombre,
     exercises, duracionSeg, volumenTotal, prCount: 0, comparacion: null
@@ -1626,34 +1651,38 @@ function finalizarSesionTarde(){
 }
 
 function finalizarSesion(){
+  detenerTimer();
   const ses = state.activeSession;
   if(ses.turno==='tarde') return finalizarSesionTarde();
   const duracionSeg = Math.round((Date.now()-ses.inicio)/1000);
   let volumenTotal = 0, prCount = 0;
   ses.exercises.forEach(e=>{
-    e.sets.forEach(s=>{ volumenTotal += s.peso*s.reps; });
     if(e.prLogrado) prCount++;
-    const normalesHechas = e.sets.filter(s=>s.tipo==='Normal' && s.done && s.peso>0);
-    const referencia = normalesHechas.length ? normalesHechas[normalesHechas.length-1] : e.sets[e.sets.length-1];
+    const hechas = e.sets.filter(s=>s.done);
+    if(!hechas.length) return; // no hecho: no se registra ni cambia lo guardado para la próxima
+    hechas.forEach(s=>{ volumenTotal += s.peso*s.reps; });
+    const normalesHechas = hechas.filter(s=>s.tipo==='Normal' && s.peso>0);
+    const referencia = normalesHechas.length ? normalesHechas[normalesHechas.length-1] : hechas[hechas.length-1];
     registrarCambioPeso(e.nombre, referencia.peso, referencia.reps, `Fin de sesión (${ses.dayName})`);
     state.lastByExercise[e.nombre] = {peso: referencia.peso, reps: referencia.reps};
 
     // guardar la serie completa (peso, reps, tipo) de cada set, por día + ejercicio
     state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
     const key = ses.dayName + '::' + e.nombre;
-    state.lastSetsByDayExercise[key] = e.sets.map(s=>({peso:s.peso, reps:s.reps, tipo:s.tipo}));
+    state.lastSetsByDayExercise[key] = hechas.map(s=>({peso:s.peso, reps:s.reps, tipo:s.tipo}));
   });
 
   const prevSame = [...state.history].reverse().find(h=>h.dayName===ses.dayName);
   let comparacion = null;
   if(prevSame){
-    const diff = prevSame.volumenTotal ? Math.round(((volumenTotal-prevSame.volumenTotal)/prevSame.volumenTotal)*100) : null;
+    const prevVol = volumenDe(prevSame);
+    const diff = prevVol ? Math.round(((volumenTotal-prevVol)/prevVol)*100) : null;
     comparacion = diff;
   }
 
   const record = {
     fecha: new Date().toISOString(), dayName: ses.dayName,
-    exercises: ses.exercises.map(e=>({nombre:e.nombre, sets:e.sets})),
+    exercises: ses.exercises.map(e=>({nombre:e.nombre, sets:e.sets.filter(s=>s.done)})).filter(e=>e.sets.length),
     duracionSeg, volumenTotal, prCount, comparacion
   };
   state.history.push(record);
@@ -1669,12 +1698,9 @@ function finalizarSesion(){
 
 function avanzarSlot(){
   state.slot++;
-  const week = weekNumber();
-  if(state.slot % 5 === 0 && (week===4 || week===12)){
-    state.showWeekBanner = week;
-  } else {
-    state.showWeekBanner = null;
-  }
+  const n = diasPorSemana();
+  const semanaTerminada = state.slot % n === 0 ? state.slot / n : null;
+  state.showWeekBanner = (semanaTerminada && semanaTerminada % 4 === 0) ? semanaTerminada : null;
 }
 
 function screenResumen(){
@@ -1960,7 +1986,7 @@ function screenHistorial(){
   }
   [...state.history].reverse().forEach(h=>{
     const fecha = new Date(h.fecha).toLocaleDateString('es-AR',{day:'2-digit',month:'short'});
-    wrap.appendChild(el(`<div class="hist-row"><span>${fecha} · ${h.dayName}</span><span class="muted">${Math.round(h.volumenTotal)} kg</span></div>`));
+    wrap.appendChild(el(`<div class="hist-row"><span>${fecha} · ${h.dayName}</span><span class="muted">${Math.round(volumenDe(h))} kg</span></div>`));
   });
   if((state.historyTarde||[]).length){
     wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:16px 0 8px">Turno tarde</p>`));
@@ -2015,7 +2041,7 @@ function renderChartEjercicio(nombre){
     const ex = h.exercises.find(e=>e.nombre===nombre);
     if(!ex) return;
     let mejor1rm = 0, mejorPeso = 0;
-    ex.sets.filter(s=>s.tipo==='Normal').forEach(s=>{
+    setsHechos(ex).filter(s=>s.tipo==='Normal').forEach(s=>{
       const e1rm = estimar1RM(s.peso, s.reps);
       if(e1rm > mejor1rm){ mejor1rm = e1rm; mejorPeso = s.peso; }
     });
@@ -2052,12 +2078,14 @@ function generarInforme(){
     const fecha = new Date(h.fecha).toLocaleDateString('es-AR');
     out += `\n${fecha} - ${h.dayName}\n`;
     h.exercises.forEach(e=>{
-      const setsStr = e.sets.map(s=>`${s.peso}kg x ${s.reps}${s.rpe?` RPE${s.rpe}`:''} (${s.tipo})`).join(', ');
+      const hechos = setsHechos(e);
+      if(!hechos.length) return;
+      const setsStr = hechos.map(s=>`${s.peso}kg x ${s.reps}${s.rpe?` RPE${s.rpe}`:''} (${s.tipo})`).join(', ');
       out += `  ${e.nombre}: ${setsStr}\n`;
       const nota = (state.notasEjercicio||{})[e.nombre];
       if(nota) out += `    Nota: ${nota}\n`;
     });
-    out += `  Volumen total: ${Math.round(h.volumenTotal)} kg | Duración: ${Math.round(h.duracionSeg/60)} min\n`;
+    out += `  Volumen total: ${Math.round(volumenDe(h))} kg | Duración: ${Math.round(h.duracionSeg/60)} min\n`;
   });
 
   const tarde = state.historyTarde || [];
@@ -2103,7 +2131,7 @@ function generarCSV(){
   state.history.forEach(h=>{
     const fecha = new Date(h.fecha).toLocaleDateString('es-AR');
     h.exercises.forEach(e=>{
-      e.sets.forEach((s,i)=>{
+      setsHechos(e).forEach((s,i)=>{
         rows.push([fecha, h.dayName, e.nombre, i+1, s.peso, s.reps, s.tipo, s.rpe||'']);
       });
     });
