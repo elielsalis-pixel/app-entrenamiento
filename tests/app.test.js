@@ -211,7 +211,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await tocar('text=Volver');
 
   // --- biblioteca
-  ok('biblioteca: 252 ejercicios con datos completos', await ev(()=>BIBLIOTECA.length===252 && BIBLIOTECA.every(x=>x.nombre && x.patron in PATRONES && x.principal.length && ['baja','media','alta'].includes(x.lumbar))));
+  ok('biblioteca: 433 ejercicios con datos completos', await ev(()=>BIBLIOTECA.length===433 && BIBLIOTECA.every(x=>x.nombre && x.patron in PATRONES && x.principal.length && ['baja','media','alta'].includes(x.lumbar))));
   ok('biblioteca: reconoce tus nombres (fondo de máquina asistido, remo en polea, curl femoral)', await ev(()=>
     buscarEjercicio('Fondo de máquina asistido').nombre==='Fondos en máquina' && buscarEjercicio('remo en polea').patron==='tiron_h' && buscarEjercicio('Curl femoral').patron==='femoral'));
   ok('biblioteca: fotos de la base en ejercicios sin ilustración', await ev(()=>imagenDe('Remo con barra').startsWith('ejercicios/fdb/')));
