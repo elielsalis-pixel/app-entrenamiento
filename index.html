@@ -227,11 +227,19 @@ function descargarCopia(){
   state.ultimaCopia = new Date().toISOString(); saveState(); render();
 }
 async function compartirCopia(){
-  const file = new File([JSON.stringify(armarCopia())], nombreCopia(), {type:'application/json'});
+  // Chrome solo deja compartir ciertos tipos (imagen, audio, video, PDF, texto): .json no está, .txt sí.
+  const file = new File([JSON.stringify(armarCopia())], nombreCopia().replace('.json','.txt'), {type:'text/plain'});
+  if(navigator.canShare && !navigator.canShare({files:[file]})){
+    alert('Este celular no permite compartir el archivo. Usá "Descargar copia" y subilo a Drive desde Descargas.');
+    return;
+  }
   try{
     await navigator.share({files:[file], title:'Copia de seguridad Entreno'});
     state.ultimaCopia = new Date().toISOString(); saveState(); render();
-  } catch(e){ /* cancelado */ }
+  } catch(e){
+    if(e && e.name==='AbortError') return; // lo cancelaste vos
+    alert('No se pudo compartir (' + (e && e.name ? e.name : 'error') + '). Usá "Descargar copia" y subilo a Drive desde Descargas.');
+  }
 }
 function validarCopia(obj){
   return obj && obj.app==='entreno' && obj.state && typeof obj.state==='object' && Array.isArray(obj.state.history);
@@ -250,7 +258,7 @@ async function restaurarCopia(obj){
 function botonRestaurar(){
   const box = document.createElement('div');
   const btn = el(`<button class="btn btn-full">Restaurar desde una copia</button>`);
-  const input = el(`<input type="file" accept="application/json,.json" style="display:none">`);
+  const input = el(`<input type="file" accept="application/json,.json,text/plain,.txt" style="display:none">`);
   btn.onclick = ()=> input.click();
   input.onchange = (e)=>{
     const file = e.target.files[0];
@@ -747,7 +755,7 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
   const btnDescargar = el(`<button class="btn" style="flex:1">Descargar copia</button>`);
   btnDescargar.onclick = descargarCopia;
   copiaRow.appendChild(btnDescargar);
-  if(navigator.canShare && navigator.canShare({files:[new File(['x'],'x.json',{type:'application/json'})]})){
+  if(navigator.canShare && navigator.canShare({files:[new File(['x'],'x.txt',{type:'text/plain'})]})){
     const btnCompartir = el(`<button class="btn" style="flex:1">Compartir copia</button>`);
     btnCompartir.onclick = compartirCopia;
     copiaRow.appendChild(btnCompartir);
