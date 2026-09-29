@@ -48,8 +48,6 @@
   #tabbar button.active{color:var(--accent)}
   .icon{width:20px;height:20px}
   .banner{background:var(--accent-bg);color:var(--accent);border-radius:var(--radius);padding:12px;font-size:13px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:8px}
-  .weekrow{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14px}
-  .set-grid{display:grid;grid-template-columns:20px 1fr 1fr 1fr 30px;gap:5px;align-items:center;margin-bottom:6px}
   .set-input{font-size:13px;padding:7px 2px;text-align:center;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%}
   .set-select{font-size:11px;padding:7px 1px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%}
   .segbar{display:flex;gap:6px;margin-bottom:4px}
@@ -76,7 +74,6 @@
 
 <script>
 /* ---------- estado y persistencia ---------- */
-const DIAS_ORDEN = ['Push','Pull','Legs','Tren superior','Pierna + brazos'];
 
 function loadState(){
   const raw = localStorage.getItem('entrenoState');
@@ -97,6 +94,8 @@ function loadState(){
   };
 }
 let state = loadState();
+// claves de funciones que ya no existen (Diagnóstico, plantilla de rutina extra)
+['mostrarDiagnostico','mostrarLog','rutinaExtra'].forEach(k=>{ delete state[k]; });
 let avisoGuardadoMostrado = false;
 function saveState(){
   try{
@@ -125,30 +124,17 @@ function abrirMediaDB(){
     req.onerror = ()=>rej(req.error);
   });
 }
-function mediaPut(key, value){
+function mediaTx(op){
   if(!mediaDB) return Promise.resolve();
   return new Promise((res, rej)=>{
     const tx = mediaDB.transaction('media','readwrite');
-    tx.objectStore('media').put(value, key);
+    op(tx.objectStore('media'));
     tx.oncomplete = ()=>res(); tx.onerror = ()=>rej(tx.error);
   });
 }
-function mediaDel(key){
-  if(!mediaDB) return Promise.resolve();
-  return new Promise((res, rej)=>{
-    const tx = mediaDB.transaction('media','readwrite');
-    tx.objectStore('media').delete(key);
-    tx.oncomplete = ()=>res(); tx.onerror = ()=>rej(tx.error);
-  });
-}
-function mediaClear(){
-  if(!mediaDB) return Promise.resolve();
-  return new Promise((res, rej)=>{
-    const tx = mediaDB.transaction('media','readwrite');
-    tx.objectStore('media').clear();
-    tx.oncomplete = ()=>res(); tx.onerror = ()=>rej(tx.error);
-  });
-}
+function mediaPut(key, value){ return mediaTx(st=>st.put(value, key)); }
+function mediaDel(key){ return mediaTx(st=>st.delete(key)); }
+function mediaClear(){ return mediaTx(st=>st.clear()); }
 function mediaLeerTodo(){
   return new Promise((res, rej)=>{
     const out = {};
@@ -217,7 +203,7 @@ function armarCopia(){
     media: { images: media.images, sounds: media.sounds }
   };
 }
-function nombreCopia(){ return `entreno-copia-${new Date().toISOString().slice(0,10)}.json`; }
+function nombreCopia(){ return `entreno-copia-${hoyISO()}.json`; }
 function descargarCopia(){
   const blob = new Blob([JSON.stringify(armarCopia())], {type:'application/json'});
   const a = document.createElement('a');
@@ -300,6 +286,25 @@ function fmtTime(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/6
 function diasPorSemana(){ return (state.routine && state.routine.days.length) || 5; }
 function weekNumber(){ return Math.min(12, Math.floor(state.slot/diasPorSemana())+1); }
 function todayDayIndex(){ return state.slot % diasPorSemana(); }
+function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function copiarTexto(texto, msgEl, okTxt){
+  navigator.clipboard.writeText(texto).then(()=>{ msgEl.textContent = okTxt; })
+    .catch(()=>{ msgEl.textContent = 'No se pudo copiar automáticamente.'; });
+}
+function botonVolver(onClick){
+  const b = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
+  b.onclick = onClick; return b;
+}
+function bloqueVerFormato(html){
+  const box = document.createElement('div');
+  const btn = el(`<button class="btn" style="font-size:12px;padding:6px 10px;margin-bottom:10px">Ver formato</button>`);
+  const caja = el(`<div class="card" style="margin-bottom:10px;font-size:12px;line-height:1.6;display:none">${html}</div>`);
+  btn.onclick = ()=>{ caja.style.display = caja.style.display==='none' ? 'block' : 'none'; };
+  box.appendChild(btn); box.appendChild(caja);
+  return box;
+}
+function tituloSeccion(txt){ return el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">${txt}</p>`); }
+function aCSV(rows){ return rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n'); }
 function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstChild; }
 function icon(name){ return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`; }
 const ICONS = {
@@ -368,38 +373,44 @@ function aplicarAjustes(texto){
   return resultado;
 }
 
+const DEF_MANANA = {descanso:90, series:3, repsMin:8, repsMax:12, calentamiento:0, aproximacion:0};
+const DEF_TARDE  = {descanso:60, series:3, repsMin:null, repsMax:null, medida:'reps'};
+function lineasDe(text){ return text.split('\n').map(l=>l.trim()).filter(Boolean); }
+function parseLineaEjercicio(line, def){
+  const parts = line.split('|').map(p=>p.trim());
+  if(!parts[0]) return null;
+  const e = {nombre: parts[0], ...def, alternativas: []};
+  parts.slice(1).forEach(p=>{
+    let m;
+    if((m = p.match(/descanso\s*(\d+)/i))) e.descanso = parseInt(m[1],10);
+    if((m = p.match(/series\s*(\d+)/i))) e.series = parseInt(m[1],10);
+    if((m = p.match(/calentamiento\s*(\d+)/i))) e.calentamiento = parseInt(m[1],10);
+    if((m = p.match(/aproximaci[oó]n\s*(\d+)/i))) e.aproximacion = parseInt(m[1],10);
+    if((m = p.match(/reps\s*(\d+)\s*-\s*(\d+)/i))){ e.repsMin = parseInt(m[1],10); e.repsMax = parseInt(m[2],10); }
+    if((m = p.match(/medida\s*([a-z+]+)/i)) && MEDIDAS[m[1].toLowerCase()]) e.medida = m[1].toLowerCase();
+    if((m = p.match(/alt:\s*(.+)/i))) e.alternativas = m[1].split(',').map(a=>({nombre:a.trim(), detalle:''}));
+  });
+  return e;
+}
+function ejercicioATexto(e){
+  if(e.cardio) return `CARDIO: ${e.nombre}`;
+  const partes = [e.nombre, `descanso ${e.descanso}`];
+  if(e.calentamiento!==undefined) partes.push(`calentamiento ${e.calentamiento||0}`, `aproximacion ${e.aproximacion||0}`);
+  partes.push(`series ${e.series}`);
+  if(e.medida) partes.push(`medida ${e.medida}`);
+  if(e.repsMin) partes.push(`reps ${e.repsMin}-${e.repsMax}`);
+  if(e.alternativas && e.alternativas.length) partes.push(`alt: ${e.alternativas.map(a=>a.nombre).join(', ')}`);
+  return partes.join(' | ');
+}
 function parseRoutine(text){
   const days = [];
   let current = null;
-  text.split('\n').forEach(line=>{
-    line = line.trim();
-    if(!line) return;
+  lineasDe(text).forEach(line=>{
     const dayMatch = line.match(/^DIA\s*\d+\s*:\s*(.+)$/i);
-    if(dayMatch){
-      current = {name: dayMatch[1].trim(), exercises: []};
-      days.push(current);
-      return;
-    }
+    if(dayMatch){ current = {name: dayMatch[1].trim(), exercises: []}; days.push(current); return; }
     if(!current) return;
-    const parts = line.split('|').map(p=>p.trim());
-    if(parts.length < 1) return;
-    const nombre = parts[0];
-    let descanso = 90, series = 3, calentamiento = 0, aproximacion = 0, repsMin = 8, repsMax = 12, alternativas = [];
-    parts.slice(1).forEach(p=>{
-      const dm = p.match(/descanso\s*(\d+)/i);
-      const sm = p.match(/series\s*(\d+)/i);
-      const cm = p.match(/calentamiento\s*(\d+)/i);
-      const apm = p.match(/aproximaci[oó]n\s*(\d+)/i);
-      const rm = p.match(/reps\s*(\d+)\s*-\s*(\d+)/i);
-      const am = p.match(/alt:\s*(.+)/i);
-      if(dm) descanso = parseInt(dm[1],10);
-      if(sm) series = parseInt(sm[1],10);
-      if(cm) calentamiento = parseInt(cm[1],10);
-      if(apm) aproximacion = parseInt(apm[1],10);
-      if(rm){ repsMin = parseInt(rm[1],10); repsMax = parseInt(rm[2],10); }
-      if(am) alternativas = am[1].split(',').map(a=>({nombre:a.trim(), detalle:''}));
-    });
-    current.exercises.push({nombre, descanso, series, calentamiento, aproximacion, repsMin, repsMax, alternativas});
+    const e = parseLineaEjercicio(line, DEF_MANANA);
+    if(e) current.exercises.push(e);
   });
   return {days};
 }
@@ -430,8 +441,10 @@ function renderMusicbar(){
   const m = document.getElementById('musicbar');
   if(currentTab==='inicio' || currentTab==='sesion'){
     m.style.display = 'flex';
-    m.innerHTML = `<button class="btn" onclick="abrirSpotify()">${icon('spotify')} Spotify</button>
-      <button class="btn" onclick="abrirYoutube()">${icon('youtube')} YouTube</button>`;
+    m.innerHTML = '';
+    [['spotify','Spotify',abrirSpotify],['youtube','YouTube',abrirYoutube]].forEach(([ic,txt,fn])=>{
+      const b = el(`<button class="btn">${icon(ic)} ${txt}</button>`); b.onclick = fn; m.appendChild(b);
+    });
   } else { m.style.display='none'; m.innerHTML=''; }
 }
 
@@ -493,15 +506,15 @@ function screenSinRutina(){
     <p class="muted" style="font-size:12px;margin-bottom:16px">Pegalo en cualquier IA (Claude, ChatGPT, Gemini) — trae preguntas sobre tus días, objetivo, tiempo, equipamiento y demás, y te devuelve la rutina lista en el formato correcto para pegar acá abajo.</p>
     <textarea id="routinepaste" placeholder="DIA 1: Push
 [Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]"></textarea>
-    <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="cargarRutina()">Cargar rutina</button>
+    <button class="btn btn-primary btn-full" style="margin-top:12px" id="btnCargarRutina">Cargar rutina</button>
   </div>`);
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin:20px 0 8px">¿Ya usabas la app y tenés una copia de seguridad?</p>`));
   wrap.appendChild(botonRestaurar());
+  wrap.querySelector('#btnCargarRutina').onclick = cargarRutina;
   const copyBtn = wrap.querySelector('#btnCopiarPrompt');
   const msg = wrap.querySelector('#promptMsg');
   copyBtn.onclick = ()=>{
-    navigator.clipboard.writeText(PROMPT_GENERADOR).then(()=>{ msg.textContent = 'Prompt copiado, pegalo en tu IA preferida'; })
-      .catch(()=>{ msg.textContent = 'No se pudo copiar automáticamente.'; });
+    copiarTexto(PROMPT_GENERADOR, msg, 'Prompt copiado, pegalo en tu IA preferida');
   };
   return wrap;
 }
@@ -546,34 +559,14 @@ function fmtSet(s, medida){
 function parseTarde(text){
   let name = null;
   const exercises = [];
-  text.split('\n').forEach(line=>{
-    line = line.trim();
-    if(!line) return;
+  lineasDe(text).forEach(line=>{
     const head = line.match(/^TARDE\s*\d*\s*:\s*(.*)$/i);
     if(head){ name = head[1].trim() || 'Turno tarde'; return; }
     if(name===null) return;
     const cm = line.match(/^CARDIO\s*:\s*(.+)$/i);
-    if(cm){
-      exercises.push({nombre: cm[1].split('|')[0].trim(), cardio:true});
-      return;
-    }
-    const parts = line.split('|').map(p=>p.trim());
-    const nombre = parts[0];
-    if(!nombre) return;
-    let descanso = 60, series = 3, medida = 'reps', repsMin = null, repsMax = null, alternativas = [];
-    parts.slice(1).forEach(p=>{
-      const dm = p.match(/descanso\s*(\d+)/i);
-      const sm = p.match(/series\s*(\d+)/i);
-      const mm = p.match(/medida\s*([a-z+]+)/i);
-      const rm = p.match(/reps\s*(\d+)\s*-\s*(\d+)/i);
-      const am = p.match(/alt:\s*(.+)/i);
-      if(dm) descanso = parseInt(dm[1],10);
-      if(sm) series = parseInt(sm[1],10);
-      if(mm && MEDIDAS[mm[1].toLowerCase()]) medida = mm[1].toLowerCase();
-      if(rm){ repsMin = parseInt(rm[1],10); repsMax = parseInt(rm[2],10); }
-      if(am) alternativas = am[1].split(',').map(a=>({nombre:a.trim(), detalle:''}));
-    });
-    exercises.push({nombre, descanso, series, medida, repsMin, repsMax, alternativas});
+    if(cm){ exercises.push({nombre: cm[1].split('|')[0].trim(), cardio:true}); return; }
+    const e = parseLineaEjercicio(line, DEF_TARDE);
+    if(e) exercises.push(e);
   });
   if(name===null || !exercises.length) return null;
   return {name, exercises};
@@ -585,55 +578,17 @@ function cargarTarde(){
   state.routineTarde = parsed;
   saveState(); render();
 }
-function tardeToText(t){
-  let out = `TARDE: ${t.name}\n`;
-  t.exercises.forEach(e=>{
-    if(e.cardio){ out += `CARDIO: ${e.nombre}\n`; return; }
-    out += `${e.nombre} | series ${e.series} | medida ${e.medida} | descanso ${e.descanso}`;
-    if(e.repsMin) out += ` | reps ${e.repsMin}-${e.repsMax}`;
-    if(e.alternativas && e.alternativas.length) out += ` | alt: ${e.alternativas.map(a=>a.nombre).join(', ')}`;
-    out += '\n';
-  });
-  return out;
-}
+function tardeToText(t){ return [`TARDE: ${t.name}`, ...t.exercises.map(ejercicioATexto)].join('\n') + '\n'; }
 
 const TARDE_KEY = 'Turno tarde';
-function seedSetsTarde(e){
-  const saved = (state.lastSetsByDayExercise || {})[TARDE_KEY + '::' + e.nombre];
-  const sets = [];
-  for(let i=0;i<(e.series||3);i++){
-    const prev = saved && saved.length ? saved[Math.min(i, saved.length-1)] : null;
-    sets.push({
-      peso: prev ? (prev.peso||0) : 0,
-      reps: prev ? (prev.reps||0) : (e.repsMin ? Math.round((e.repsMin+e.repsMax)/2) : 0),
-      seg:  prev ? (prev.seg||0) : 0,
-      m:    prev ? (prev.m||0) : 0,
-      tipo:'Normal', done:false, rpe:null
-    });
-  }
-  return sets;
-}
 function nuevoCardio(e){
   return {maquina: e.nombre, duracion:'', velocidad:'', inclinacion:'', nivel:'', distancia:'',
           medicionTipo:'sensacion', medicionValor:'Moderado, hablo con esfuerzo (Zona 2 real)'};
 }
 function empezarSesionTarde(){
-  if(!state.routineTarde) return;
-  if(state.activeSession){
-    alert('Tenés una sesión en curso. Finalizala antes de empezar otra.');
-    setTab('sesion'); return;
-  }
   const t = state.routineTarde;
-  state.activeSession = {
-    turno:'tarde', dayName: TARDE_KEY, rutinaNombre: t.name, inicio: Date.now(), focusIdx: 0,
-    exercises: t.exercises.map(e=> e.cardio
-      ? {nombre:e.nombre, cardio:true, cardioData:nuevoCardio(e), cardioHecho:false, sets:[], alternativas:[]}
-      : {nombre:e.nombre, medida:e.medida, descanso:(state.customDescanso && state.customDescanso[e.nombre]) || e.descanso,
-         alternativas:e.alternativas, repsMin:e.repsMin, repsMax:e.repsMax, sets:seedSetsTarde(e)})
-  };
-  state.resumenCelebrado = false;
-  setSessionView('activa');
-  setTab('sesion');
+  if(!t) return;
+  iniciarSesion({turno:'tarde', dayName: TARDE_KEY, rutinaNombre: t.name}, t.exercises, TARDE_KEY, false);
 }
 function fmtCardio(c){
   const partes = [`${c.maquina}`, `${c.duracion} min`];
@@ -648,15 +603,7 @@ function fmtCardio(c){
 let editDayIdx = null;
 let dayHoldTimeout = null;
 
-function diaToText(day, idx){
-  let out = `DIA ${idx+1}: ${day.name}\n`;
-  day.exercises.forEach(e=>{
-    out += `${e.nombre} | descanso ${e.descanso} | calentamiento ${e.calentamiento||0} | aproximacion ${e.aproximacion||0} | series ${e.series} | reps ${e.repsMin||8}-${e.repsMax||12}`;
-    if(e.alternativas && e.alternativas.length) out += ` | alt: ${e.alternativas.map(a=>a.nombre).join(', ')}`;
-    out += '\n';
-  });
-  return out;
-}
+function diaToText(day, idx){ return [`DIA ${idx+1}: ${day.name}`, ...day.exercises.map(ejercicioATexto)].join('\n') + '\n'; }
 
 /* ---------- pantalla: rutina (ver actual / cargar nueva) ---------- */
 function screenRutina(){
@@ -670,32 +617,38 @@ function screenRutina(){
     const card = document.createElement('div');
     card.className = 'card';
     card.style.marginBottom = '10px';
-    card.innerHTML = `<p style="font-weight:600;margin-bottom:6px">${d.name}</p>` +
-      d.exercises.map(e=>`<p class="muted" style="font-size:13px;margin-bottom:2px">${e.nombre} — ${e.series} series${e.repsMin?` de ${e.repsMin}-${e.repsMax} reps`:''}</p>`).join('');
+    card.innerHTML = `<p style="font-weight:600;margin-bottom:6px">${esc(d.name)}</p>` +
+      d.exercises.map(e=>`<p class="muted" style="font-size:13px;margin-bottom:2px">${esc(e.nombre)} — ${e.series} series${e.repsMin?` de ${e.repsMin}-${e.repsMax} reps`:''}</p>`).join('');
 
-    let held = false;
-    const startHold = ()=>{ held=false; dayHoldTimeout = setTimeout(()=>{ held=true; editDayIdx=i; render(); },550); };
+    const startHold = ()=>{ dayHoldTimeout = setTimeout(()=>{ editDayIdx=i; render(); },550); };
     const cancelHold = ()=>{ clearTimeout(dayHoldTimeout); };
     card.onmousedown = startHold; card.onmouseup = cancelHold; card.onmouseleave = cancelHold;
     card.ontouchstart = startHold; card.ontouchend = cancelHold;
     wrap.appendChild(card);
   });
 
+  wrap.appendChild(seccionReemplazarRutina());
+  wrap.appendChild(seccionTurnoTarde());
+  wrap.appendChild(seccionCopia());
+  wrap.appendChild(seccionReinicio());
+  wrap.appendChild(seccionNotificaciones());
+  wrap.appendChild(seccionSonidos());
+  wrap.appendChild(seccionFrases());
+  wrap.appendChild(seccionAjustes());
+  wrap.appendChild(seccionCompartir());
+  return wrap;
+}
+function seccionReemplazarRutina(){
+  const wrap = document.createElement('div');
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:20px 0 8px">Cargar una rutina nueva completa</p>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Esto reemplaza todos los días. Tu historial de sesiones no se pierde.</p>`));
-  const verFormatoBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px;margin-bottom:10px">Ver formato</button>`);
-  const formatoBox = el(`<div class="card" style="margin-bottom:10px;font-size:12px;line-height:1.6;display:none">
+  wrap.appendChild(bloqueVerFormato(`
     <p class="muted">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio: nombre + datos separados por <b> | </b>.</p>
-    <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:6px">[Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]</p>
-  </div>`);
-  verFormatoBtn.onclick = ()=>{ formatoBox.style.display = formatoBox.style.display==='none' ? 'block' : 'none'; };
-  wrap.appendChild(verFormatoBtn);
-  wrap.appendChild(formatoBox);
+    <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:6px">[Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]</p>`));
   const copyPromptBtn2 = el(`<button class="btn btn-full" style="margin-bottom:10px">📋 Copiar prompt para pedírselo a una IA</button>`);
   const promptMsg2 = el(`<div style="font-size:12px;color:var(--success);text-align:center;margin-bottom:8px"></div>`);
   copyPromptBtn2.onclick = ()=>{
-    navigator.clipboard.writeText(PROMPT_GENERADOR).then(()=>{ promptMsg2.textContent = 'Prompt copiado, pegalo en tu IA preferida'; })
-      .catch(()=>{ promptMsg2.textContent = 'No se pudo copiar automáticamente.'; });
+    copiarTexto(PROMPT_GENERADOR, promptMsg2, 'Prompt copiado, pegalo en tu IA preferida');
   };
   wrap.appendChild(copyPromptBtn2);
   wrap.appendChild(promptMsg2);
@@ -704,38 +657,41 @@ function screenRutina(){
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Reemplazar rutina completa</button>`);
   btn.onclick = ()=>{ if(confirm('¿Reemplazar toda la rutina actual por esta nueva?')){ cargarRutina(); } };
   wrap.appendChild(btn);
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Turno tarde</p>`));
+function seccionTurnoTarde(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Turno tarde'));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Rutina aparte para el doble turno (cardio, abs, agarre o lo que sea). No entra en la rotación de 5 días y en el informe sale en su propia sección.</p>`));
   if(state.routineTarde){
     const t = state.routineTarde;
-    const tCard = el(`<div class="card" style="margin-bottom:10px"><p style="font-weight:600;margin-bottom:6px">${t.name}</p></div>`);
+    const tCard = el(`<div class="card" style="margin-bottom:10px"><p style="font-weight:600;margin-bottom:6px">${esc(t.name)}</p></div>`);
     t.exercises.forEach(e=>{
       const det = e.cardio ? 'cardio' : `${e.series} series · ${e.medida}${e.repsMin?` · ${e.repsMin}-${e.repsMax} reps`:''} · desc ${e.descanso}s`;
-      tCard.appendChild(el(`<p class="muted" style="font-size:13px;margin-bottom:2px">${e.nombre} — ${det}</p>`));
+      tCard.appendChild(el(`<p class="muted" style="font-size:13px;margin-bottom:2px">${esc(e.nombre)} — ${esc(det)}</p>`));
     });
     wrap.appendChild(tCard);
   }
-  const verFormatoTardeBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px;margin-bottom:10px">Ver formato</button>`);
-  const formatoTardeBox = el(`<div class="card" style="margin-bottom:10px;font-size:12px;line-height:1.6;display:none">
+  wrap.appendChild(bloqueVerFormato(`
     <p class="muted">Empieza con <b>TARDE: nombre</b>. Cardio: <b>CARDIO: máquina</b>. Resto: nombre + datos separados por <b> | </b>. Medidas: reps, seg, kg+reps, kg+seg, kg+m.</p>
     <p style="font-family:monospace;background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:6px">TARDE: Cardio + Abs
 CARDIO: Cinta
 Crunch en polea | series 3 | medida kg+reps | reps 12-15 | descanso 60
 Plancha | series 3 | medida seg | descanso 45
-Caminata del granjero | series 3 | medida kg+m | descanso 90</p>
-  </div>`);
-  verFormatoTardeBtn.onclick = ()=>{ formatoTardeBox.style.display = formatoTardeBox.style.display==='none' ? 'block' : 'none'; };
-  wrap.appendChild(verFormatoTardeBtn);
-  wrap.appendChild(formatoTardeBox);
+Caminata del granjero | series 3 | medida kg+m | descanso 90</p>`));
   wrap.appendChild(el(`<textarea id="tardePaste" placeholder="TARDE: Cardio + Abs
 CARDIO: Cinta
-Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToText(state.routineTarde) : ''}</textarea>`));
+Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? esc(tardeToText(state.routineTarde)) : ''}</textarea>`));
   const btnTarde = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">${state.routineTarde ? 'Reemplazar turno tarde' : 'Guardar turno tarde'}</button>`);
   btnTarde.onclick = ()=>{ if(!state.routineTarde || confirm('¿Reemplazar el turno tarde actual?')) cargarTarde(); };
   wrap.appendChild(btnTarde);
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Copia de seguridad</p>`));
+function seccionCopia(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Copia de seguridad'));
   const diasCopia = diasDesdeUltimaCopia();
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Todo lo que cargás vive solo en este celular. La copia es un archivo con tus rutinas, historial, fotos y audios: descargala y subila a Drive desde la carpeta Descargas. ${diasCopia===null?'<b>Todavía no hiciste ninguna copia.</b>':`Última copia: hace ${diasCopia} día${diasCopia===1?'':'s'}.`}</p>`));
   const copiaRow = el(`<div style="display:flex;gap:8px;margin-bottom:8px"></div>`);
@@ -744,8 +700,12 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
   copiaRow.appendChild(btnDescargar);
   wrap.appendChild(copiaRow);
   wrap.appendChild(botonRestaurar());
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Reiniciar avance</p>`));
+function seccionReinicio(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Reiniciar avance'));
   const btnResetSemana = el(`<button class="btn btn-full" style="margin-bottom:8px">Reiniciar semana actual (volver al Día 1 de esta semana)</button>`);
   btnResetSemana.onclick = ()=>{
     if(confirm('¿Volver a repetir la semana actual desde el Día 1?')){
@@ -764,8 +724,12 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
     }
   };
   wrap.appendChild(btnResetTodo);
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Notificaciones</p>`));
+function seccionNotificaciones(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Notificaciones'));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Para que suene y vibre aunque estés en otra app durante el descanso. En algunos celus con ahorro de batería agresivo puede no funcionar si pasa mucho tiempo en segundo plano.</p>`));
   const notifStatus = window.Notification ? Notification.permission : 'unsupported';
   if(notifStatus==='granted'){
@@ -777,8 +741,12 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
     notifBtn.onclick = ()=>{ Notification.requestPermission().then(()=>render()); };
     wrap.appendChild(notifBtn);
   }
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Sonido al terminar el descanso</p>`));
+function seccionSonidos(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Sonido al terminar el descanso'));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Por defecto suena un beep. Podés subir varios audios cortos (mp3, m4a, ogg) — si hay más de uno, suena uno al azar cada vez.</p>`));
   if(media.sounds.length){
     const selectorRow = el(`<div style="display:flex;gap:8px;margin-bottom:10px"></div>`);
@@ -817,13 +785,21 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
     reader.readAsDataURL(file);
   };
   wrap.appendChild(uploadBtn); wrap.appendChild(soundInput);
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Frases motivadoras</p>`));
+function seccionFrases(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Frases motivadoras'));
   const motToggle = el(`<button class="btn btn-full">${state.motivacionOn===false?'Activar frases motivadoras':'Desactivar frases motivadoras'}</button>`);
   motToggle.onclick = ()=>{ state.motivacionOn = state.motivacionOn===false ? true : false; saveState(); render(); };
   wrap.appendChild(motToggle);
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Ajustes sugeridos</p>`));
+function seccionAjustes(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Ajustes sugeridos'));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Pegá acá los ajustes de peso que te dé el Project de Entrenamiento (formato AJUSTE: nombre | peso X) — actualiza el peso de referencia para la próxima vez que hagas cada ejercicio, sin tener que esperar a entrenarlo.</p>`));
   wrap.appendChild(el(`<textarea id="ajustesPaste" placeholder="AJUSTE: Prensa de piernas | peso 52
 AJUSTE: Press banca plano | peso 45"></textarea>`));
@@ -832,21 +808,24 @@ AJUSTE: Press banca plano | peso 45"></textarea>`));
   btnAjustes.onclick = ()=>{
     const txt = document.getElementById('ajustesPaste').value;
     const resultado = aplicarAjustes(txt);
-    ajustesMsg.innerHTML = resultado.map(r=>`<p style="color:${r.ok?'var(--success)':'var(--danger)'};margin-bottom:2px">${r.texto}</p>`).join('');
+    ajustesMsg.innerHTML = resultado.map(r=>`<p style="color:${r.ok?'var(--success)':'var(--danger)'};margin-bottom:2px">${esc(r.texto)}</p>`).join('');
     if(resultado.some(r=>r.ok)){ document.getElementById('ajustesPaste').value=''; saveState(); }
   };
   wrap.appendChild(btnAjustes);
   wrap.appendChild(ajustesMsg);
+  return wrap;
+}
 
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Compartir la app</p>`));
+function seccionCompartir(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(tituloSeccion('Compartir la app'));
   const appUrl = window.location.origin + window.location.pathname;
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;word-break:break-all;margin-bottom:8px">${appUrl}</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;word-break:break-all;margin-bottom:8px">${esc(appUrl)}</p>`));
   const shareRow = el(`<div style="display:flex;gap:8px"></div>`);
   const copyLinkBtn = el(`<button class="btn" style="flex:1">${icon('copy')} Copiar link</button>`);
   const copyMsg = el(`<div style="font-size:12px;color:var(--success);text-align:center;margin-top:6px"></div>`);
   copyLinkBtn.onclick = ()=>{
-    navigator.clipboard.writeText(appUrl).then(()=>{ copyMsg.textContent = 'Link copiado'; })
-      .catch(()=>{ copyMsg.textContent = 'No se pudo copiar.'; });
+    copiarTexto(appUrl, copyMsg, 'Link copiado');
   };
   shareRow.appendChild(copyLinkBtn);
   if(navigator.share){
@@ -856,18 +835,15 @@ AJUSTE: Press banca plano | peso 45"></textarea>`));
   }
   wrap.appendChild(shareRow);
   wrap.appendChild(copyMsg);
-
   return wrap;
 }
 
 function screenEditarDia(idx){
   const day = state.routine.days[idx];
   const wrap = document.createElement('div');
-  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
-  back.onclick = ()=>{ editDayIdx=null; render(); };
-  wrap.appendChild(back);
-  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Editar: ${day.name}</h2>`));
-  wrap.appendChild(el(`<textarea id="daypaste">${diaToText(day, idx)}</textarea>`));
+  wrap.appendChild(botonVolver(()=>{ editDayIdx=null; render(); }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Editar: ${esc(day.name)}</h2>`));
+  wrap.appendChild(el(`<textarea id="daypaste">${esc(diaToText(day, idx))}</textarea>`));
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar cambios de este día</button>`);
   btn.onclick = ()=>{
     const txt = document.getElementById('daypaste').value;
@@ -915,7 +891,7 @@ function screenInicio(){
   const tardeCard = el(`<div class="card" style="margin-bottom:8px"></div>`);
   if(state.routineTarde){
     tardeCard.appendChild(el(`<p class="secondary" style="font-size:12px;margin-bottom:4px">Turno tarde</p>`));
-    tardeCard.appendChild(el(`<p style="font-weight:600;margin-bottom:2px">${state.routineTarde.name}</p>`));
+    tardeCard.appendChild(el(`<p style="font-weight:600;margin-bottom:2px">${esc(state.routineTarde.name)}</p>`));
     tardeCard.appendChild(el(`<p class="muted" style="font-size:13px;margin-bottom:10px">${state.routineTarde.exercises.length} ejercicios</p>`));
     const btnTarde = el(`<button class="btn btn-full">🌙 Empezar turno tarde</button>`);
     btnTarde.onclick = empezarSesionTarde;
@@ -958,7 +934,7 @@ function screenInicio(){
       detalle.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border)';
       d.exercises.forEach(e=>{
         const totalSets = (e.calentamiento||0)+(e.aproximacion||0)+(e.series||0);
-        detalle.appendChild(el(`<p style="font-size:13px;margin-bottom:4px">${e.nombre} <span class="muted">— ${totalSets} series${e.repsMin?` × ${e.repsMin}-${e.repsMax} reps`:''}</span></p>`));
+        detalle.appendChild(el(`<p style="font-size:13px;margin-bottom:4px">${esc(e.nombre)} <span class="muted">— ${totalSets} series${e.repsMin?` × ${e.repsMin}-${e.repsMax} reps`:''}</span></p>`));
       });
       dayCard.appendChild(detalle);
     }
@@ -975,72 +951,52 @@ function saltarDia(){
 // sessionView (activa | sustituir | resumen) ya declarado arriba, junto a currentTab
 let sustEjIdx = null;
 let holdTimeout = null;
-let holdFired = false;
 let restInterval = null;
 
-function empezarSesion(dayIdx){
-  const day = state.routine.days[dayIdx % state.routine.days.length];
-  state.activeSession = {
-    dayIdx, dayName: day.name, inicio: Date.now(),
-    focusIdx: 0,
-    exercises: day.exercises.map(e=>({
-      nombre: e.nombre, descanso: (state.customDescanso && state.customDescanso[e.nombre]) || e.descanso,
-      alternativas: e.alternativas, repsMin: e.repsMin, repsMax: e.repsMax,
-      sets: seedSets(e, day.name)
-    }))
-  };
+function ejercicioDeSesion(e, clave, usarGeneral){
+  if(e.cardio) return {nombre:e.nombre, cardio:true, cardioData:nuevoCardio(e), cardioHecho:false, sets:[], alternativas:[]};
+  return {nombre:e.nombre, medida:e.medida, descanso:(state.customDescanso||{})[e.nombre] || e.descanso,
+          alternativas:e.alternativas, repsMin:e.repsMin, repsMax:e.repsMax, sets:seedSets(e, clave, usarGeneral)};
+}
+function iniciarSesion(datos, ejercicios, clave, usarGeneral){
+  if(state.activeSession){ alert('Tenés una sesión en curso. Finalizala antes de empezar otra.'); setTab('sesion'); return; }
+  state.activeSession = {...datos, inicio: Date.now(), focusIdx: 0, exercises: ejercicios.map(e=>ejercicioDeSesion(e, clave, usarGeneral))};
   state.resumenCelebrado = false;
   setSessionView('activa');
   setTab('sesion');
 }
-function seedSets(e, dayName){
-  const nCal = e.calentamiento || 0;
-  const nApx = e.aproximacion || 0;
-  const nNorm = e.series || 3;
-  const repsDefault = Math.round(((e.repsMin||8)+(e.repsMax||12))/2);
-
-  const key = dayName + '::' + e.nombre;
-  const saved = (state.lastSetsByDayExercise || {})[key];
-
-  if(saved && saved.length){
-    const porTipo = {Calentamiento:[], 'Aproximación':[], Normal:[]};
-    saved.forEach(s=>{ if(porTipo[s.tipo]) porTipo[s.tipo].push(s); });
-    const normalBase = porTipo.Normal.length ? porTipo.Normal[0].peso : 0;
-
-    function construir(tipo, n, fallbackPeso){
-      const arr = porTipo[tipo];
-      const out = [];
-      for(let i=0;i<n;i++){
-        if(arr.length){
-          // si hay más series hoy que la vez pasada, las extra copian la última serie conocida
-          const s = arr[Math.min(i, arr.length-1)];
-          out.push({peso: s.peso, reps: s.reps, tipo, done:false, rpe:null});
-        } else {
-          out.push({peso: fallbackPeso, reps: repsDefault, tipo, done:false, rpe:null});
-        }
-      }
-      return out;
-    }
-
-    const sets = [
-      ...construir('Calentamiento', nCal, Math.round(normalBase*0.5)),
-      ...construir('Aproximación', nApx, Math.round(normalBase*0.75)),
-      ...construir('Normal', nNorm, normalBase)
-    ];
-    if(sets.length===0) sets.push({peso: normalBase, reps: repsDefault, tipo:'Normal', done:false, rpe:null});
-    return sets;
-  }
-
-  // sin dato guardado para este día+ejercicio puntual (primera vez en este día, o dato viejo sin migrar):
-  // usamos el último valor general conocido del ejercicio como referencia uniforme, igual que antes.
-  const last = state.lastByExercise[e.nombre];
-  const repsTarget = last ? last.reps : repsDefault;
-  const pesoTarget = last ? last.peso : 0;
-  const sets = [];
-  for(let i=0;i<nCal;i++) sets.push({peso: Math.round(pesoTarget*0.5), reps: repsTarget, tipo:'Calentamiento', done:false, rpe:null});
-  for(let i=0;i<nApx;i++) sets.push({peso: Math.round(pesoTarget*0.75), reps: repsTarget, tipo:'Aproximación', done:false, rpe:null});
-  for(let i=0;i<nNorm;i++) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false, rpe:null});
-  if(sets.length===0) sets.push({peso: pesoTarget, reps: repsTarget, tipo:'Normal', done:false, rpe:null});
+function empezarSesion(dayIdx){
+  const day = state.routine.days[dayIdx % state.routine.days.length];
+  iniciarSesion({dayIdx, dayName: day.name}, day.exercises, day.name, true);
+}
+function esKgReps(medida){ return camposDe(medida).join('+')==='peso+reps'; }
+function nuevaSerie(e, tipo, valores){
+  const s = {tipo, done:false, rpe:null};
+  camposDe(e.medida).forEach(c=>{ s[c] = valores && valores[c]!=null ? valores[c] : 0; });
+  return s;
+}
+// Precarga cada serie con lo hecho la última vez en ese mismo día (clave) y posición.
+// usarGeneral: si no hay dato de ese día, usa el último peso conocido del ejercicio (rutina de la mañana).
+function seedSets(e, clave, usarGeneral){
+  const repsDef = e.repsMin ? Math.round((e.repsMin+e.repsMax)/2) : 0;
+  const guardadas = (state.lastSetsByDayExercise || {})[clave + '::' + e.nombre] || [];
+  const porTipo = {Calentamiento:[], 'Aproximación':[], Normal:[]};
+  guardadas.forEach(s=>{ (porTipo[s.tipo] || porTipo.Normal).push(s); });
+  const general = !guardadas.length && usarGeneral ? state.lastByExercise[e.nombre] : null;
+  const base = porTipo.Normal[0] || (general ? {peso: general.peso, reps: general.reps} : {peso:0, reps: repsDef});
+  const armar = (tipo, n, pct)=>Array.from({length:n}, (_,i)=>{
+    const arr = porTipo[tipo];
+    if(arr.length) return nuevaSerie(e, tipo, arr[Math.min(i, arr.length-1)]); // las extra copian la última conocida
+    const v = {...base, reps: guardadas.length ? repsDef : base.reps};
+    if(v.peso && pct!==1) v.peso = Math.round(v.peso*pct);
+    return nuevaSerie(e, tipo, v);
+  });
+  const sets = [
+    ...armar('Calentamiento', e.calentamiento||0, 0.5),
+    ...armar('Aproximación', e.aproximacion||0, 0.75),
+    ...armar('Normal', e.series===undefined ? 3 : e.series, 1)
+  ];
+  if(!sets.length) sets.push(nuevaSerie(e, 'Normal', base));
   return sets;
 }
 function exDone(ej){ return ej.cardio ? !!ej.cardioHecho : ej.sets.every(s=>s.done); }
@@ -1054,13 +1010,13 @@ function debeSubirPeso(ej){
 function screenSesionWrap(){
   if(sessionView==='resumen' && state.lastResumen) return screenResumen();
   if(!state.activeSession){
-    const dayIdx = todayDayIndex();
-    return el(`<div style="text-align:center;padding:40px 0">
+    const vacio = el(`<div style="text-align:center;padding:40px 0">
       <p class="muted" style="margin-bottom:16px">No hay una sesión activa.</p>
-      <button class="btn btn-primary" onclick="empezarSesion(${dayIdx})">Empezar entrenamiento de hoy</button>
+      <button class="btn btn-primary">Empezar entrenamiento de hoy</button>
     </div>`);
+    vacio.querySelector('button').onclick = ()=>empezarSesion(todayDayIndex());
+    return vacio;
   }
-  if(sessionView==='resumen') return screenResumen();
   if(sessionView==='sustituir') return screenSustituir();
   if(sessionView==='discos') return screenDiscos();
   if(sessionView==='notas') return screenNotas();
@@ -1070,13 +1026,16 @@ function screenSesionWrap(){
 function screenSesion(){
   const ses = state.activeSession;
   const ej = ses.exercises[ses.focusIdx];
-  if(ej.repsMin===undefined && ses.turno!=='tarde'){
-    const day = state.routine.days[ses.dayIdx % state.routine.days.length];
-    const orig = day && day.exercises.find(x=>x.nombre===ej.nombre);
-    if(orig){ ej.repsMin = orig.repsMin; ej.repsMax = orig.repsMax; saveState(); }
-  }
   const wrap = document.createElement('div');
-
+  wrap.appendChild(sesionSegmentos(ses));
+  wrap.appendChild(sesionFoto(ej));
+  wrap.appendChild(sesionEncabezado(ses, ej));
+  wrap.appendChild(sesionCuerpo(ses, ej));
+  wrap.appendChild(sesionNavegacion(ses));
+  return wrap;
+}
+function sesionSegmentos(ses){
+  const wrap = document.createDocumentFragment();
   const seg = el(`<div class="segbar"></div>`);
   ses.exercises.forEach((e,i)=>{
     const b = document.createElement('button');
@@ -1090,16 +1049,20 @@ function screenSesion(){
 
   const labels = el(`<div style="display:flex;gap:6px;margin-bottom:14px"></div>`);
   ses.exercises.forEach((e,i)=>{
-    labels.appendChild(el(`<div class="seglabel" style="${i===ses.focusIdx?'color:var(--accent);font-weight:600':''}">${e.nombre}</div>`));
+    labels.appendChild(el(`<div class="seglabel" style="${i===ses.focusIdx?'color:var(--accent);font-weight:600':''}">${esc(e.nombre)}</div>`));
   });
   wrap.appendChild(labels);
+  return wrap;
+}
 
+function sesionFoto(ej){
+  const wrap = document.createDocumentFragment();
   const customImg = media.images[ej.nombre];
   const autoImg = window.buscarImagen && buscarImagen(ej.nombre);
   const imgPath = customImg || autoImg;
   const photoBox = el(`<div class="exphoto"></div>`);
   if(imgPath){
-    photoBox.innerHTML = `<img src="${imgPath}" alt="${ej.nombre}">`;
+    photoBox.innerHTML = `<img src="${imgPath}" alt="${esc(ej.nombre)}">`;
   } else {
     photoBox.innerHTML = icon('photo');
   }
@@ -1129,8 +1092,12 @@ function screenSesion(){
     addRow.appendChild(quitarBtn);
   }
   wrap.appendChild(addRow);
+  return wrap;
+}
 
-  const head = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px"><h2>${ej.nombre}</h2></div>`);
+function sesionEncabezado(ses, ej){
+  const wrap = document.createDocumentFragment();
+  const head = el(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px"><h2>${esc(ej.nombre)}</h2></div>`);
   const headBtns = el(`<div style="display:flex;gap:6px"></div>`);
   const btnNotas = el(`<button aria-label="Notas del ejercicio" class="btn" style="font-size:12px;padding:5px 8px">📝</button>`);
   btnNotas.onclick = ()=>{ notasEjIdx = ses.focusIdx; setSessionView('notas'); render(); };
@@ -1140,17 +1107,20 @@ function screenSesion(){
   head.appendChild(headBtns);
   wrap.appendChild(head);
   if((state.notasEjercicio||{})[ej.nombre]){
-    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px;font-style:italic">📝 ${state.notasEjercicio[ej.nombre]}</p>`));
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px;font-style:italic">📝 ${esc(state.notasEjercicio[ej.nombre])}</p>`));
   }
   if(ej.repsMin){
     wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:10px">Objetivo: ${ej.repsMin}-${ej.repsMax} reps</p>`));
   }
+  return wrap;
+}
 
+function sesionCuerpo(ses, ej){
+  const wrap = document.createDocumentFragment();
   if(ej.cardio){
     wrap.appendChild(renderCardioCard(ej));
   } else {
   const campos = camposDe(ej.medida);
-  const esKgReps = campos.join('+')==='peso+reps';
   wrap.appendChild(renderTimerBox(ej));
   if(ses.turno!=='tarde') wrap.appendChild(renderStatsRow(ej));
   const hayCalOApx = ej.sets.some(s=>s.tipo==='Calentamiento' || s.tipo==='Aproximación');
@@ -1183,11 +1153,15 @@ function screenSesion(){
   addBtn.onclick = ()=>{ const last = ej.sets[ej.sets.length-1]; ej.sets.push({...last, tipo:'Normal', done:false, rpe:null, deleteMode:false}); saveState(); render(); };
   wrap.appendChild(addBtn);
 
-  if(esKgReps && debeSubirPeso(ej)){
+  if(esKgReps(ej.medida) && debeSubirPeso(ej)){
     wrap.appendChild(el(`<p style="font-size:12px;color:var(--success);margin-top:10px">${icon('arrowup')} Subí peso la próxima</p>`));
   }
   }
+  return wrap;
+}
 
+function sesionNavegacion(ses){
+  const wrap = document.createDocumentFragment();
   const nav = el(`<div style="display:flex;gap:8px;margin-top:16px"></div>`);
   if(ses.focusIdx>0){
     const prev = el(`<button class="btn" style="flex:1">${icon('chevleft')} Anterior</button>`);
@@ -1204,7 +1178,6 @@ function screenSesion(){
   const finBtn = el(`<button class="btn btn-primary btn-full" style="margin-top:8px">Finalizar sesión</button>`);
   finBtn.onclick = pedirFinalizar;
   wrap.appendChild(finBtn);
-
   return wrap;
 }
 
@@ -1243,7 +1216,6 @@ function renderStatsRow(ej){
   wrap.appendChild(btnDiscos);
   return wrap;
 }
-function ses_global_focus(){ return state.activeSession.focusIdx; }
 
 function screenDiscos(){
   const ses = state.activeSession;
@@ -1251,9 +1223,7 @@ function screenDiscos(){
   const mejor = mejorSetActual(ej);
   const pesoSugerido = mejor ? mejor.peso : (ej.sets.find(s=>s.tipo==='Normal')||{}).peso || 0;
   const wrap = document.createElement('div');
-  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
-  back.onclick = ()=>{ setSessionView('activa'); render(); };
-  wrap.appendChild(back);
+  wrap.appendChild(botonVolver(()=>{ setSessionView('activa'); render(); }));
   wrap.appendChild(el(`<h2 style="margin-bottom:12px">Calculadora de discos</h2>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Peso total en la barra (kg)</p>`));
   const pesoInput = el(`<input type="text" inputmode="decimal" class="set-input" style="width:100%;margin-bottom:8px" value="${pesoSugerido}">`);
@@ -1295,12 +1265,10 @@ function screenNotas(){
   const ses = state.activeSession;
   const ej = ses.exercises[notasEjIdx];
   const wrap = document.createElement('div');
-  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
-  back.onclick = ()=>{ setSessionView('activa'); render(); };
-  wrap.appendChild(back);
-  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Notas: ${ej.nombre}</h2>`));
+  wrap.appendChild(botonVolver(()=>{ setSessionView('activa'); render(); }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Notas: ${esc(ej.nombre)}</h2>`));
   const actual = (state.notasEjercicio||{})[ej.nombre] || '';
-  wrap.appendChild(el(`<textarea id="notaText" placeholder="Ej: técnica, sensaciones, ajustes...">${actual}</textarea>`));
+  wrap.appendChild(el(`<textarea id="notaText" placeholder="Ej: técnica, sensaciones, ajustes...">${esc(actual)}</textarea>`));
   const btn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar nota</button>`);
   btn.onclick = ()=>{
     state.notasEjercicio = state.notasEjercicio || {};
@@ -1384,6 +1352,7 @@ function renderSetRow(ej,s,si){
   botRow.appendChild(rpeSel);
 
   const actionBtn = document.createElement('button');
+  actionBtn.setAttribute('aria-label', s.deleteMode ? 'Borrar serie' : 'Marcar serie');
   actionBtn.style.cssText = 'padding:0;width:28px;height:28px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;background:var(--surface)';
   actionBtn.innerHTML = s.deleteMode ? icon('trash') : (s.done ? icon('check') : icon('circle'));
   actionBtn.style.color = s.deleteMode ? 'var(--danger)' : (s.done ? 'var(--success)' : 'var(--text-muted)');
@@ -1417,12 +1386,11 @@ function renderSetRow(ej,s,si){
   return row;
 }
 
-function renderCardioCard(ej){
-  const c = ej.cardioData;
-  const box = el(`<div class="card" style="margin-bottom:12px"></div>`);
+function camposCardio(c){
+  const box = document.createElement('div');
   function campo(label, key, placeholder, numeric){
     box.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">${label}</p>`));
-    const inp = el(`<input type="text" ${numeric?'inputmode="decimal"':''} class="set-input" style="width:100%;margin-bottom:10px" placeholder="${placeholder}" value="${c[key]||''}">`);
+    const inp = el(`<input type="text" ${numeric?'inputmode="decimal"':''} class="set-input" style="width:100%;margin-bottom:10px" placeholder="${placeholder}" value="${esc(c[key]||'')}">`);
     inp.onfocus = ()=>inp.select();
     inp.oninput = ()=>{ c[key] = inp.value; saveState(); };
     box.appendChild(inp);
@@ -1440,7 +1408,7 @@ function renderCardioCard(ej){
     ${opciones.map(o=>`<option value="sensacion|${o}" ${c.medicionTipo==='sensacion'&&c.medicionValor===o?'selected':''}>${o}</option>`).join('')}
     <option value="fc|" ${c.medicionTipo==='fc'?'selected':''}>Frecuencia cardíaca promedio</option>
   </select>`);
-  const fcIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-bottom:10px;display:${c.medicionTipo==='fc'?'block':'none'}" placeholder="Ej: 130" value="${c.medicionTipo==='fc'?(c.medicionValor||''):''}">`);
+  const fcIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-bottom:10px;display:${c.medicionTipo==='fc'?'block':'none'}" placeholder="Ej: 130" value="${c.medicionTipo==='fc'?esc(c.medicionValor||''):''}">`);
   sel.onchange = ()=>{
     const [t,v] = sel.value.split('|');
     c.medicionTipo = t;
@@ -1450,10 +1418,14 @@ function renderCardioCard(ej){
   };
   fcIn.oninput = ()=>{ c.medicionValor = fcIn.value; saveState(); };
   box.appendChild(sel); box.appendChild(fcIn);
-
+  return box;
+}
+function renderCardioCard(ej){
+  const box = el(`<div class="card" style="margin-bottom:12px"></div>`);
+  box.appendChild(camposCardio(ej.cardioData));
   const hecho = el(`<button class="btn btn-full" style="${ej.cardioHecho?'background:var(--success);color:#fff;border-color:var(--success)':''}">${ej.cardioHecho?icon('check')+' Hecho':'Marcar como hecho'}</button>`);
   hecho.onclick = ()=>{
-    if(!ej.cardioHecho && !(parseFloat(c.duracion)>0)){ alert('Cargá la duración.'); return; }
+    if(!ej.cardioHecho && !(parseFloat(ej.cardioData.duracion)>0)){ alert('Cargá la duración.'); return; }
     ej.cardioHecho = !ej.cardioHecho; saveState(); render();
   };
   box.appendChild(hecho);
@@ -1461,7 +1433,7 @@ function renderCardioCard(ej){
 }
 
 function registrarSetDone(ej,s){
-  if(camposDe(ej.medida).join('+')!=='peso+reps') return;
+  if(!esKgReps(ej.medida)) return;
   const vol = s.peso * s.reps;
   const prevPR = state.prByExercise[ej.nombre] || 0;
   if(vol > prevPR){
@@ -1473,13 +1445,13 @@ function registrarSetDone(ej,s){
 /* ---------- sonido y frases motivadoras ---------- */
 function beep(){
   if(state.sonidoPreferido==='custom' && media.sounds.length){
-    try{
-      const elegido = media.sounds[Math.floor(Math.random()*media.sounds.length)];
-      const audio = new Audio(elegido.data);
-      audio.play().catch(()=>{});
-      return;
-    } catch(e){}
+    const elegido = media.sounds[Math.floor(Math.random()*media.sounds.length)];
+    new Audio(elegido.data).play().catch(beepGenerado); // si tu audio no se puede reproducir, suena el beep
+    return;
   }
+  beepGenerado();
+}
+function beepGenerado(){
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     [0,0.15,0.3].forEach((t,i)=>{
@@ -1492,7 +1464,9 @@ function beep(){
       osc.start(ctx.currentTime + t);
       osc.stop(ctx.currentTime + t + 0.13);
     });
-  } catch(e){}
+  } catch(e){
+    console.warn('Sin audio disponible; queda el aviso en pantalla.', e);
+  }
 }
 
 const FRASES_TIMER = ['¡Vamos que se puede!','A meterle con todo','¡Dale con fuerza!','Concentración total','¡Es tu momento!'];
@@ -1505,13 +1479,20 @@ function mostrarMotivacion(texto){
   if(state.motivacionOn===false) return;
   const existing = document.getElementById('motivtoast');
   if(existing) existing.remove();
-  const toast = el(`<div id="motivtoast" style="position:fixed;left:16px;right:16px;bottom:80px;max-width:448px;margin:0 auto;background:var(--text);color:var(--bg);padding:12px 16px;border-radius:10px;text-align:center;font-size:14px;font-weight:600;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.2)">${texto}</div>`);
+  const toast = el(`<div id="motivtoast" style="position:fixed;left:16px;right:16px;bottom:80px;max-width:448px;margin:0 auto;background:var(--text);color:var(--bg);padding:12px 16px;border-radius:10px;text-align:center;font-size:14px;font-weight:600;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.2)">${esc(texto)}</div>`);
   document.body.appendChild(toast);
   setTimeout(()=>{ toast.remove(); }, 2200);
 }
 
 let notifTimeoutId = null;
 
+// En Android, Chrome no permite new Notification(): hay que mostrarla desde el service worker.
+function notificar(titulo, cuerpo){
+  if(!('Notification' in window) || Notification.permission!=='granted' || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready
+    .then(reg=>reg.showNotification(titulo, {body: cuerpo, vibrate:[200,100,200], tag:'descanso-timer', renotify:true}))
+    .catch(err=>console.warn('No se pudo mostrar la notificación', err));
+}
 function iniciarTimer(ej){
   detenerTimer();
   state.activeSession.exercises.forEach(o=>{ if(o!==ej && o.timerCorriendo){ o.timerCorriendo=false; o.tiempoRestante=o.descanso; } });
@@ -1522,13 +1503,7 @@ function iniciarTimer(ej){
   tickTimer(ej);
   restInterval = setInterval(()=>tickTimer(ej), 1000);
 
-  if(window.Notification && Notification.permission==='granted'){
-    notifTimeoutId = setTimeout(()=>{
-      try{
-        new Notification('Descanso terminado', { body: `Volvé a ${ej.nombre}`, vibrate: [200,100,200], tag: 'descanso-timer', renotify: true });
-      } catch(e){}
-    }, ej.descanso*1000);
-  }
+  notifTimeoutId = setTimeout(()=>notificar('Descanso terminado', `Volvé a ${ej.nombre}`), ej.descanso*1000);
 }
 
 function tickTimer(ej){
@@ -1560,11 +1535,9 @@ function screenSustituir(){
   const ses = state.activeSession;
   const ej = ses.exercises[sustEjIdx];
   const wrap = document.createElement('div');
-  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
-  back.onclick = ()=>{ setSessionView('activa'); render(); };
-  wrap.appendChild(back);
+  wrap.appendChild(botonVolver(()=>{ setSessionView('activa'); render(); }));
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:4px">Sustituir</p>`));
-  wrap.appendChild(el(`<h2 style="margin-bottom:16px">${ej.nombre}</h2>`));
+  wrap.appendChild(el(`<h2 style="margin-bottom:16px">${esc(ej.nombre)}</h2>`));
   (ej.alternativas||[]).forEach(alt=>{
     const card = el(`<div class="alt-card" style="flex-direction:column;align-items:stretch;gap:8px">
       <div><p style="font-weight:600;font-size:14px">${alt.nombre}</p><p class="muted" style="font-size:12px">${alt.detalle||''}</p></div>
@@ -1618,77 +1591,54 @@ function pedirFinalizar(){
 function setsHechos(e){ return (e.sets||[]).filter(s=>s.done!==false); }
 function volumenDe(h){ return h.exercises.reduce((a,e)=>a+setsHechos(e).reduce((b,s)=>b+(s.peso||0)*(s.reps||0),0),0); }
 
-function finalizarSesionTarde(){
+
+function serieLimpia(s, medida){
+  const out = {tipo: s.tipo, rpe: s.rpe, done: true};
+  camposDe(medida).forEach(c=>{ out[c] = s[c]||0; });
+  return out;
+}
+function finalizarSesion(){
+  detenerTimer();
   const ses = state.activeSession;
+  const tarde = ses.turno==='tarde';
+  const clave = tarde ? TARDE_KEY : ses.dayName;
   const duracionSeg = Math.round((Date.now()-ses.inicio)/1000);
   state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
-  let volumenTotal = 0;
+  let volumenTotal = 0, prCount = 0;
   const exercises = [];
   ses.exercises.forEach(e=>{
     if(e.cardio){
       if(e.cardioHecho) exercises.push({nombre:e.nombre, cardio:true, cardioData:{...e.cardioData}});
       return;
     }
-    const hechas = e.sets.filter(s=>s.done);
-    if(!hechas.length) return;
-    if(camposDe(e.medida).join('+')==='peso+reps') hechas.forEach(s=>{ volumenTotal += s.peso*s.reps; });
-    const limpio = e.sets.map(s=>({peso:s.peso||0, reps:s.reps||0, seg:s.seg||0, m:s.m||0, tipo:s.tipo, rpe:s.rpe, done:s.done}));
-    const hechasLimpias = limpio.filter(s=>s.done);
-    state.lastSetsByDayExercise[TARDE_KEY + '::' + e.nombre] = hechasLimpias;
-    exercises.push({nombre:e.nombre, medida:e.medida, sets:hechasLimpias});
-  });
-  const record = {
-    fecha: new Date().toISOString(), turno:'tarde', dayName: 'Turno tarde: ' + ses.rutinaNombre,
-    exercises, duracionSeg, volumenTotal, prCount: 0, comparacion: null
-  };
-  state.historyTarde = state.historyTarde || [];
-  state.historyTarde.push(record);
-  state.lastResumen = record;
-  state.activeSession = null;
-  setSessionView('resumen');
-  saveState();
-  render();
-}
-
-function finalizarSesion(){
-  detenerTimer();
-  const ses = state.activeSession;
-  if(ses.turno==='tarde') return finalizarSesionTarde();
-  const duracionSeg = Math.round((Date.now()-ses.inicio)/1000);
-  let volumenTotal = 0, prCount = 0;
-  ses.exercises.forEach(e=>{
     if(e.prLogrado) prCount++;
-    const hechas = e.sets.filter(s=>s.done);
+    const hechas = e.sets.filter(s=>s.done).map(s=>serieLimpia(s, e.medida));
     if(!hechas.length) return; // no hecho: no se registra ni cambia lo guardado para la próxima
-    hechas.forEach(s=>{ volumenTotal += s.peso*s.reps; });
-    const normalesHechas = hechas.filter(s=>s.tipo==='Normal' && s.peso>0);
-    const referencia = normalesHechas.length ? normalesHechas[normalesHechas.length-1] : hechas[hechas.length-1];
-    registrarCambioPeso(e.nombre, referencia.peso, referencia.reps, `Fin de sesión (${ses.dayName})`);
-    state.lastByExercise[e.nombre] = {peso: referencia.peso, reps: referencia.reps};
-
-    // guardar la serie completa (peso, reps, tipo) de cada set, por día + ejercicio
-    state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
-    const key = ses.dayName + '::' + e.nombre;
-    state.lastSetsByDayExercise[key] = hechas.map(s=>({peso:s.peso, reps:s.reps, tipo:s.tipo}));
+    if(esKgReps(e.medida)) hechas.forEach(s=>{ volumenTotal += s.peso*s.reps; });
+    state.lastSetsByDayExercise[clave + '::' + e.nombre] = hechas.map(({rpe, done, ...v})=>v);
+    if(!tarde){
+      const normales = hechas.filter(s=>s.tipo==='Normal' && s.peso>0);
+      const ref = normales.length ? normales[normales.length-1] : hechas[hechas.length-1];
+      registrarCambioPeso(e.nombre, ref.peso, ref.reps, `Fin de sesión (${ses.dayName})`);
+      state.lastByExercise[e.nombre] = {peso: ref.peso, reps: ref.reps};
+    }
+    exercises.push(tarde ? {nombre:e.nombre, medida:e.medida, sets:hechas} : {nombre:e.nombre, sets:hechas});
   });
 
-  const prevSame = [...state.history].reverse().find(h=>h.dayName===ses.dayName);
-  let comparacion = null;
-  if(prevSame){
-    const prevVol = volumenDe(prevSame);
-    const diff = prevVol ? Math.round(((volumenTotal-prevVol)/prevVol)*100) : null;
-    comparacion = diff;
+  const record = {fecha: new Date().toISOString(), exercises, duracionSeg, volumenTotal, prCount, comparacion: null};
+  if(tarde){
+    record.turno = 'tarde';
+    record.dayName = 'Turno tarde: ' + ses.rutinaNombre;
+    state.historyTarde = state.historyTarde || [];
+    state.historyTarde.push(record);
+  } else {
+    record.dayName = ses.dayName;
+    const prevSame = [...state.history].reverse().find(h=>h.dayName===ses.dayName);
+    const prevVol = prevSame ? volumenDe(prevSame) : 0;
+    if(prevVol) record.comparacion = Math.round(((volumenTotal-prevVol)/prevVol)*100);
+    state.history.push(record);
+    avanzarSlot();
   }
-
-  const record = {
-    fecha: new Date().toISOString(), dayName: ses.dayName,
-    exercises: ses.exercises.map(e=>({nombre:e.nombre, sets:e.sets.filter(s=>s.done)})).filter(e=>e.sets.length),
-    duracionSeg, volumenTotal, prCount, comparacion
-  };
-  state.history.push(record);
-
-  avanzarSlot();
-
   state.lastResumen = record;
   state.activeSession = null;
   setSessionView('resumen');
@@ -1722,7 +1672,7 @@ function screenResumen(){
   if(r.prCount>0) wrap.appendChild(el(`<p style="font-size:13px;color:var(--success);margin-bottom:8px">${r.prCount} récord${r.prCount>1?'es':''} personal${r.prCount>1?'es':''} hoy</p>`));
   if(r.comparacion!==null && r.comparacion!==undefined){
     const signo = r.comparacion>=0?'+':'';
-    wrap.appendChild(el(`<p style="font-size:13px;color:var(--text-2);margin-bottom:8px">${signo}${r.comparacion}% de volumen vs. la última vez que hiciste ${r.dayName}</p>`));
+    wrap.appendChild(el(`<p style="font-size:13px;color:var(--text-2);margin-bottom:8px">${signo}${r.comparacion}% de volumen vs. la última vez que hiciste ${esc(r.dayName)}</p>`));
   }
   if(state.showWeekBanner){
     wrap.appendChild(el(`<div class="banner" style="margin-top:8px"><span>Completaste la semana ${state.showWeekBanner} — exportá tu informe para el Project.</span></div>`));
@@ -1735,21 +1685,30 @@ function screenResumen(){
 }
 
 /* ---------- historial ---------- */
-/* ---------- actividad extra: cardio, agarre y abdominales ---------- */
+/* ---------- ejercicios sueltos: cardio, agarre y abdominales ---------- */
 let extraVista = 'lista'; // lista | cardio | agarre | abdominales
-let agarreSeries = [];
-let absSeries = [];
+let seriesSuelto = [];
+const SUELTOS = {
+  agarre:      {emoji:'✊', titulo:'agarre', etiqueta:'Agarre', defEj:'Dead hang', ultimo:'ultimoEjercicioAgarre', unidades:['seg','kg','m','min','reps'], unidad:'seg', agregar:'Agregar serie/intento', ejemplo:'Dead hang, caminata del granjero, etc.', nota:'Ej: combinado con caminata de 20m'},
+  abdominales: {emoji:'🔥', titulo:'abdominales', etiqueta:'Abdominales', defEj:'Crunch', ultimo:'ultimoEjercicioAbs', unidades:['reps','seg','kg'], unidad:'reps', agregar:'Agregar serie', ejemplo:'Crunch, plancha, elevación de piernas, etc.', nota:'Ej: 3 ejercicios distintos, circuito'}
+};
+// fecha local (Argentina) para inputs y registros: evita que el día se corra por la diferencia con UTC
+function hoyISO(){ const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function fechaDeInput(v){ return new Date((v || hoyISO()) + 'T12:00:00').toISOString(); }
+function cardioDe(a){ return a.cardioData || {maquina:a.modalidad, duracion:a.duracionMin, medicionTipo:a.medicionTipo, medicionValor:a.medicionValor}; }
+function lineaSuelto(a, conEmoji){
+  if(a.tipo==='cardio') return `${conEmoji?'🏃 ':''}Cardio: ${fmtCardio(cardioDe(a))}`;
+  const cfg = SUELTOS[a.tipo] || SUELTOS.agarre;
+  return `${conEmoji?cfg.emoji+' ':''}${cfg.etiqueta} (${a.ejercicio}) - series: ${a.series.map(s=>`${s.valor}${s.unidad}`).join(', ')}${a.nota?` - Nota: ${a.nota}`:''}`;
+}
 
 function screenExtra(){
   state.actividadesExtra = state.actividadesExtra || [];
   const wrap = document.createElement('div');
-  const back = el(`<button class="btn" style="font-size:12px;padding:5px 10px;margin-bottom:12px">${icon('chevleft')} Volver</button>`);
-  back.onclick = ()=>{ extraVista='lista'; currentTab='inicio'; render(); };
-  wrap.appendChild(back);
+  wrap.appendChild(botonVolver(()=>{ extraVista='lista'; currentTab='inicio'; render(); }));
 
   if(extraVista==='cardio'){ wrap.appendChild(formCardio()); return wrap; }
-  if(extraVista==='agarre'){ wrap.appendChild(formAgarre()); return wrap; }
-  if(extraVista==='abdominales'){ wrap.appendChild(formAbdominales()); return wrap; }
+  if(SUELTOS[extraVista]){ wrap.appendChild(formSuelto(extraVista)); return wrap; }
 
   wrap.appendChild(el(`<h2 style="margin-bottom:4px">Ejercicio suelto</h2>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:12px">Para algo que hiciste fuera de tus rutinas.</p>`));
@@ -1757,11 +1716,13 @@ function screenExtra(){
   const btnRow = el(`<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap"></div>`);
   const btnCardio = el(`<button class="btn" style="flex:1;min-width:110px">🏃 Cardio</button>`);
   btnCardio.onclick = ()=>{ extraVista='cardio'; render(); };
-  const btnAgarre = el(`<button class="btn" style="flex:1;min-width:110px">✊ Agarre</button>`);
-  btnAgarre.onclick = ()=>{ agarreSeries = [{valor:'', unidad:'seg'}]; extraVista='agarre'; render(); };
-  const btnAbs = el(`<button class="btn" style="flex:1;min-width:110px">🔥 Abdominales</button>`);
-  btnAbs.onclick = ()=>{ absSeries = [{valor:'', unidad:'reps'}]; extraVista='abdominales'; render(); };
-  btnRow.appendChild(btnCardio); btnRow.appendChild(btnAgarre); btnRow.appendChild(btnAbs);
+  btnRow.appendChild(btnCardio);
+  Object.keys(SUELTOS).forEach(tipo=>{
+    const cfg = SUELTOS[tipo];
+    const b = el(`<button class="btn" style="flex:1;min-width:110px">${cfg.emoji} ${cfg.etiqueta}</button>`);
+    b.onclick = ()=>{ seriesSuelto = [{valor:'', unidad:cfg.unidad}]; extraVista = tipo; render(); };
+    btnRow.appendChild(b);
+  });
   wrap.appendChild(btnRow);
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:8px">Registros recientes</p>`));
@@ -1770,18 +1731,7 @@ function screenExtra(){
   }
   [...state.actividadesExtra].reverse().slice(0,15).forEach(a=>{
     const fecha = new Date(a.fecha).toLocaleDateString('es-AR',{day:'2-digit',month:'short'});
-    let linea;
-    if(a.tipo==='cardio'){
-      const medicion = a.medicionTipo==='fc' ? `FC prom. ${a.medicionValor}` : a.medicionValor;
-      linea = `🏃 ${fecha} · ${a.modalidad} · ${a.duracionMin} min · ${medicion}`;
-    } else if(a.tipo==='abdominales'){
-      const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
-      linea = `🔥 ${fecha} · ${a.ejercicio} · ${seriesStr}`;
-    } else {
-      const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
-      linea = `✊ ${fecha} · ${a.ejercicio} · ${seriesStr}`;
-    }
-    const row = el(`<div class="hist-row"><span style="font-size:13px">${linea}</span></div>`);
+    const row = el(`<div class="hist-row"><span style="font-size:13px">${esc(fecha+' · '+lineaSuelto(a, true))}</span></div>`);
     const delBtn = el(`<button aria-label="Borrar" style="padding:0;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted)">${icon('trash')}</button>`);
     delBtn.onclick = ()=>{
       const idx = state.actividadesExtra.indexOf(a);
@@ -1793,64 +1743,26 @@ function screenExtra(){
   return wrap;
 }
 
+function campoFecha(){
+  const box = document.createElement('div');
+  box.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
+  const input = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:10px" value="${hoyISO()}">`);
+  box.appendChild(input);
+  return {box, input};
+}
+
 function formCardio(){
   const wrap = document.createElement('div');
   wrap.appendChild(el(`<h2 style="margin-bottom:12px">Registrar cardio</h2>`));
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
-  const fechaIn = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:10px" value="${new Date().toISOString().slice(0,10)}">`);
-  wrap.appendChild(fechaIn);
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Duración (minutos)</p>`));
-  const durIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-bottom:10px" placeholder="30">`);
-  durIn.onfocus = ()=>durIn.select();
-  wrap.appendChild(durIn);
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Modalidad</p>`));
-  const modIn = el(`<input type="text" class="set-input" style="width:100%;margin-bottom:10px" placeholder="Cinta, elíptica, bici, caminata..." value="${state.ultimaModalidadCardio||''}">`);
-  wrap.appendChild(modIn);
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Medición</p>`));
-  const medTipo = el(`<select class="set-select" style="width:100%;margin-bottom:8px">
-    <option value="sensacion">Sensación subjetiva</option>
-    <option value="fc">Frecuencia cardíaca promedio</option>
-  </select>`);
-  wrap.appendChild(medTipo);
-
-  const medValorBox = el(`<div></div>`);
-  wrap.appendChild(medValorBox);
-
-  function renderMedValor(){
-    medValorBox.innerHTML = '';
-    if(medTipo.value==='fc'){
-      const fcIn = el(`<input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input" style="width:100%;margin-bottom:12px" placeholder="Ej: 130">`);
-      fcIn.onfocus = ()=>fcIn.select();
-      medValorBox.appendChild(fcIn);
-    } else {
-      const sel = el(`<select class="set-select" style="width:100%;margin-bottom:12px">
-        <option>Fácil, puedo hablar normal</option>
-        <option selected>Moderado, hablo con esfuerzo (Zona 2 real)</option>
-        <option>Difícil, casi no puedo hablar</option>
-      </select>`);
-      medValorBox.appendChild(sel);
-    }
-  }
-  medTipo.onchange = renderMedValor;
-  renderMedValor();
-
+  const fecha = campoFecha(); wrap.appendChild(fecha.box);
+  const c = nuevoCardio({nombre: state.ultimaModalidadCardio || ''});
+  wrap.appendChild(camposCardio(c));
   const guardarBtn = el(`<button class="btn btn-primary btn-full">Guardar</button>`);
   guardarBtn.onclick = ()=>{
-    const duracionMin = parseInt(durIn.value)||0;
-    const modalidad = modIn.value.trim();
-    if(!duracionMin || !modalidad){ alert('Completá duración y modalidad.'); return; }
-    const medValorInput = medValorBox.querySelector('input,select');
+    if(!(parseFloat(c.duracion)>0) || !c.maquina.trim()){ alert('Completá máquina y duración.'); return; }
     state.actividadesExtra = state.actividadesExtra || [];
-    state.actividadesExtra.push({
-      tipo:'cardio', fecha: new Date(fechaIn.value).toISOString(),
-      duracionMin, modalidad,
-      medicionTipo: medTipo.value, medicionValor: medValorInput.value
-    });
-    state.ultimaModalidadCardio = modalidad;
+    state.actividadesExtra.push({tipo:'cardio', fecha: fechaDeInput(fecha.input.value), cardioData: {...c, maquina: c.maquina.trim()}});
+    state.ultimaModalidadCardio = c.maquina.trim();
     saveState();
     extraVista='lista'; render();
   };
@@ -1858,119 +1770,53 @@ function formCardio(){
   return wrap;
 }
 
-function formAgarre(){
+function formSuelto(tipo){
+  const cfg = SUELTOS[tipo];
   const wrap = document.createElement('div');
-  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Registrar ejercicio de agarre</h2>`));
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
-  const fechaIn = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:10px" value="${new Date().toISOString().slice(0,10)}">`);
-  wrap.appendChild(fechaIn);
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Registrar ${cfg.titulo}</h2>`));
+  const fecha = campoFecha(); wrap.appendChild(fecha.box);
 
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Ejercicio (podés cambiarlo cuando quieras)</p>`));
-  const ejIn = el(`<input type="text" class="set-input" style="width:100%;margin-bottom:12px" placeholder="Dead hang, caminata del granjero, etc." value="${state.ultimoEjercicioAgarre||'Dead hang'}">`);
+  const ejIn = el(`<input type="text" class="set-input" style="width:100%;margin-bottom:12px" placeholder="${esc(cfg.ejemplo)}" value="${esc(state[cfg.ultimo]||cfg.defEj)}">`);
   wrap.appendChild(ejIn);
 
   const seriesBox = el(`<div></div>`);
   wrap.appendChild(seriesBox);
-
   function renderSeries(){
     seriesBox.innerHTML = '';
-    agarreSeries.forEach((s,i)=>{
+    seriesSuelto.forEach((s,i)=>{
       const row = el(`<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px"></div>`);
       row.appendChild(el(`<span style="font-size:12px;color:var(--text-muted);width:16px">${i+1}</span>`));
-      const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="Valor" value="${s.valor}">`);
+      const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="Valor" value="${esc(s.valor)}">`);
       valorIn.onfocus = ()=>valorIn.select();
       valorIn.oninput = ()=>{ s.valor = valorIn.value; };
-      const unidadSel = el(`<select class="set-select" style="width:80px">${['seg','kg','m','min','reps'].map(u=>`<option ${u===s.unidad?'selected':''}>${u}</option>`).join('')}</select>`);
+      const unidadSel = el(`<select class="set-select" style="width:80px">${cfg.unidades.map(u=>`<option ${u===s.unidad?'selected':''}>${u}</option>`).join('')}</select>`);
       unidadSel.onchange = ()=>{ s.unidad = unidadSel.value; };
       const delBtn = el(`<button aria-label="Borrar serie" style="width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface)">${icon('trash')}</button>`);
-      delBtn.onclick = ()=>{ if(agarreSeries.length>1){ agarreSeries.splice(i,1); renderSeries(); } };
+      delBtn.onclick = ()=>{ if(seriesSuelto.length>1){ seriesSuelto.splice(i,1); renderSeries(); } };
       row.appendChild(valorIn); row.appendChild(unidadSel); row.appendChild(delBtn);
       seriesBox.appendChild(row);
     });
   }
   renderSeries();
 
-  const addSerieBtn = el(`<button class="btn btn-full" style="margin-bottom:8px">${icon('plus')} Agregar serie/intento</button>`);
-  addSerieBtn.onclick = ()=>{ agarreSeries.push({valor:'', unidad: agarreSeries[agarreSeries.length-1].unidad}); renderSeries(); };
+  const addSerieBtn = el(`<button class="btn btn-full" style="margin-bottom:8px">${icon('plus')} ${cfg.agregar}</button>`);
+  addSerieBtn.onclick = ()=>{ seriesSuelto.push({valor:'', unidad: seriesSuelto[seriesSuelto.length-1].unidad}); renderSeries(); };
   wrap.appendChild(addSerieBtn);
 
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px;margin-top:8px">Nota (opcional)</p>`));
-  const notaIn = el(`<textarea id="notaAgarre" style="min-height:60px" placeholder="Ej: combinado con caminata de 20m"></textarea>`);
+  const notaIn = el(`<textarea style="min-height:60px" placeholder="${esc(cfg.nota)}"></textarea>`);
   wrap.appendChild(notaIn);
 
   const guardarBtn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar</button>`);
   guardarBtn.onclick = ()=>{
     const ejercicio = ejIn.value.trim();
     if(!ejercicio){ alert('Poné el nombre del ejercicio.'); return; }
-    const seriesLimpias = agarreSeries.filter(s=>s.valor!=='' && s.valor!=null).map(s=>({valor:parseFloat(String(s.valor).replace(',','.'))||s.valor, unidad:s.unidad}));
+    const seriesLimpias = seriesSuelto.filter(s=>s.valor!=='' && s.valor!=null).map(s=>({valor:parseFloat(String(s.valor).replace(',','.'))||s.valor, unidad:s.unidad}));
     if(!seriesLimpias.length){ alert('Cargá al menos un valor.'); return; }
     state.actividadesExtra = state.actividadesExtra || [];
-    state.actividadesExtra.push({
-      tipo:'agarre', fecha: new Date(fechaIn.value).toISOString(),
-      ejercicio, series: seriesLimpias, nota: notaIn.value.trim()
-    });
-    state.ultimoEjercicioAgarre = ejercicio;
-    saveState();
-    extraVista='lista'; render();
-  };
-  wrap.appendChild(guardarBtn);
-  return wrap;
-}
-
-function formAbdominales(){
-  const wrap = document.createElement('div');
-  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Registrar abdominales</h2>`));
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Fecha</p>`));
-  const fechaIn = el(`<input type="date" class="set-input" style="width:100%;margin-bottom:10px" value="${new Date().toISOString().slice(0,10)}">`);
-  wrap.appendChild(fechaIn);
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px">Ejercicio (podés cambiarlo cuando quieras)</p>`));
-  const ejIn = el(`<input type="text" class="set-input" style="width:100%;margin-bottom:12px" placeholder="Crunch, plancha, elevación de piernas, etc." value="${state.ultimoEjercicioAbs||'Crunch'}">`);
-  wrap.appendChild(ejIn);
-
-  const seriesBox = el(`<div></div>`);
-  wrap.appendChild(seriesBox);
-
-  function renderSeries(){
-    seriesBox.innerHTML = '';
-    absSeries.forEach((s,i)=>{
-      const row = el(`<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px"></div>`);
-      row.appendChild(el(`<span style="font-size:12px;color:var(--text-muted);width:16px">${i+1}</span>`));
-      const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="Valor" value="${s.valor}">`);
-      valorIn.onfocus = ()=>valorIn.select();
-      valorIn.oninput = ()=>{ s.valor = valorIn.value; };
-      const unidadSel = el(`<select class="set-select" style="width:80px">${['reps','seg','kg'].map(u=>`<option ${u===s.unidad?'selected':''}>${u}</option>`).join('')}</select>`);
-      unidadSel.onchange = ()=>{ s.unidad = unidadSel.value; };
-      const delBtn = el(`<button aria-label="Borrar serie" style="width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface)">${icon('trash')}</button>`);
-      delBtn.onclick = ()=>{ if(absSeries.length>1){ absSeries.splice(i,1); renderSeries(); } };
-      row.appendChild(valorIn); row.appendChild(unidadSel); row.appendChild(delBtn);
-      seriesBox.appendChild(row);
-    });
-  }
-  renderSeries();
-
-  const addSerieBtn = el(`<button class="btn btn-full" style="margin-bottom:8px">${icon('plus')} Agregar serie</button>`);
-  addSerieBtn.onclick = ()=>{ absSeries.push({valor:'', unidad: absSeries[absSeries.length-1].unidad}); renderSeries(); };
-  wrap.appendChild(addSerieBtn);
-
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:4px;margin-top:8px">Nota (opcional)</p>`));
-  const notaIn = el(`<textarea id="notaAbs" style="min-height:60px" placeholder="Ej: 3 ejercicios distintos, circuito"></textarea>`);
-  wrap.appendChild(notaIn);
-
-  const guardarBtn = el(`<button class="btn btn-primary btn-full" style="margin-top:12px">Guardar</button>`);
-  guardarBtn.onclick = ()=>{
-    const ejercicio = ejIn.value.trim();
-    if(!ejercicio){ alert('Poné el nombre del ejercicio.'); return; }
-    const seriesLimpias = absSeries.filter(s=>s.valor!=='' && s.valor!=null).map(s=>({valor:parseFloat(String(s.valor).replace(',','.'))||s.valor, unidad:s.unidad}));
-    if(!seriesLimpias.length){ alert('Cargá al menos un valor.'); return; }
-    state.actividadesExtra = state.actividadesExtra || [];
-    state.actividadesExtra.push({
-      tipo:'abdominales', fecha: new Date(fechaIn.value).toISOString(),
-      ejercicio, series: seriesLimpias, nota: notaIn.value.trim()
-    });
-    state.ultimoEjercicioAbs = ejercicio;
+    state.actividadesExtra.push({tipo, fecha: fechaDeInput(fecha.input.value), ejercicio, series: seriesLimpias, nota: notaIn.value.trim()});
+    state[cfg.ultimo] = ejercicio;
     saveState();
     extraVista='lista'; render();
   };
@@ -1986,13 +1832,13 @@ function screenHistorial(){
   }
   [...state.history].reverse().forEach(h=>{
     const fecha = new Date(h.fecha).toLocaleDateString('es-AR',{day:'2-digit',month:'short'});
-    wrap.appendChild(el(`<div class="hist-row"><span>${fecha} · ${h.dayName}</span><span class="muted">${Math.round(volumenDe(h))} kg</span></div>`));
+    wrap.appendChild(el(`<div class="hist-row"><span>${fecha} · ${esc(h.dayName)}</span><span class="muted">${Math.round(volumenDe(h))} kg</span></div>`));
   });
   if((state.historyTarde||[]).length){
     wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:16px 0 8px">Turno tarde</p>`));
     [...state.historyTarde].reverse().forEach(h=>{
       const fecha = new Date(h.fecha).toLocaleDateString('es-AR',{day:'2-digit',month:'short'});
-      wrap.appendChild(el(`<div class="hist-row"><span>${fecha} · ${h.dayName.replace('Turno tarde: ','')}</span><span class="muted">${h.exercises.length} ejerc.</span></div>`));
+      wrap.appendChild(el(`<div class="hist-row"><span>${fecha} · ${esc(h.dayName.replace('Turno tarde: ',''))}</span><span class="muted">${h.exercises.length} ejerc.</span></div>`));
     });
   }
 
@@ -2003,8 +1849,7 @@ function screenHistorial(){
   const msg = el(`<div style="font-size:12px;color:var(--success);margin-top:6px;text-align:center"></div>`);
   copyBtn.onclick = ()=>{
     const texto = generarInforme();
-    navigator.clipboard.writeText(texto).then(()=>{ msg.textContent = 'Informe copiado, listo para pegar en el Project'; })
-      .catch(()=>{ msg.textContent = 'No se pudo copiar. Mantené presionado el botón para copiar manualmente.'; });
+    copiarTexto(texto, msg, 'Informe copiado, listo para pegar en el Project');
   };
   exportBox.appendChild(copyBtn);
   exportBox.appendChild(msg);
@@ -2014,8 +1859,7 @@ function screenHistorial(){
   const csvMsg = el(`<div style="font-size:12px;color:var(--success);margin-top:6px;text-align:center"></div>`);
   csvBtn.onclick = ()=>{
     const csv = generarCSV();
-    navigator.clipboard.writeText(csv).then(()=>{ csvMsg.textContent = 'CSV copiado, pegalo en una hoja de cálculo'; })
-      .catch(()=>{ csvMsg.textContent = 'No se pudo copiar.'; });
+    copiarTexto(csv, csvMsg, 'CSV copiado, pegalo en una hoja de cálculo');
   };
   wrap.appendChild(csvBtn);
   wrap.appendChild(csvMsg);
@@ -2025,7 +1869,7 @@ function screenHistorial(){
   if(!nombres.length){
     wrap.appendChild(el(`<p class="muted" style="font-size:12px">Todavía no hay datos suficientes.</p>`));
   } else {
-    const sel = el(`<select class="set-select" style="width:100%;margin-bottom:12px">${nombres.map(n=>`<option ${n===state.chartEjercicio?'selected':''}>${n}</option>`).join('')}</select>`);
+    const sel = el(`<select class="set-select" style="width:100%;margin-bottom:12px">${nombres.map(n=>`<option ${n===state.chartEjercicio?'selected':''}>${esc(n)}</option>`).join('')}</select>`);
     sel.onchange = ()=>{ state.chartEjercicio = sel.value; saveState(); render(); };
     wrap.appendChild(sel);
     const ejSel = state.chartEjercicio || nombres[0];
@@ -2109,17 +1953,7 @@ function generarInforme(){
   if(extra.length){
     out += `\n\n=== EJERCICIOS SUELTOS (cardio / agarre / abdominales — fuera de las rutinas) ===\n`;
     extra.forEach(a=>{
-      const fecha = new Date(a.fecha).toLocaleDateString('es-AR');
-      if(a.tipo==='cardio'){
-        const medicion = a.medicionTipo==='fc' ? `FC promedio ${a.medicionValor}` : `Sensación: ${a.medicionValor}`;
-        out += `${fecha} - Cardio (${a.modalidad}) - ${a.duracionMin} min - ${medicion}\n`;
-      } else if(a.tipo==='abdominales'){
-        const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
-        out += `${fecha} - Abdominales (${a.ejercicio}) - series: ${seriesStr}${a.nota?` - Nota: ${a.nota}`:''}\n`;
-      } else {
-        const seriesStr = a.series.map(s=>`${s.valor}${s.unidad}`).join(', ');
-        out += `${fecha} - Agarre (${a.ejercicio}) - series: ${seriesStr}${a.nota?` - Nota: ${a.nota}`:''}\n`;
-      }
+      out += `${new Date(a.fecha).toLocaleDateString('es-AR')} - ${lineaSuelto(a, false)}\n`;
     });
   }
 
@@ -2136,7 +1970,7 @@ function generarCSV(){
       });
     });
   });
-  let csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  let csv = aCSV(rows);
 
   const tarde = state.historyTarde || [];
   if(tarde.length){
@@ -2152,7 +1986,7 @@ function generarCSV(){
         });
       });
     });
-    csv += '\n\n' + rowsT.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    csv += '\n\n' + aCSV(rowsT);
   }
 
   const extra = state.actividadesExtra || [];
@@ -2160,15 +1994,10 @@ function generarCSV(){
     const rows2 = [['Fecha','Tipo','Detalle1','Detalle2','Detalle3','Nota']];
     extra.forEach(a=>{
       const fecha = new Date(a.fecha).toLocaleDateString('es-AR');
-      if(a.tipo==='cardio'){
-        rows2.push([fecha, 'Cardio', a.modalidad, `${a.duracionMin} min`, a.medicionTipo==='fc'?`FC ${a.medicionValor}`:a.medicionValor, '']);
-      } else if(a.tipo==='abdominales'){
-        rows2.push([fecha, 'Abdominales', a.ejercicio, a.series.map(s=>`${s.valor}${s.unidad}`).join(' / '), '', a.nota||'']);
-      } else {
-        rows2.push([fecha, 'Agarre', a.ejercicio, a.series.map(s=>`${s.valor}${s.unidad}`).join(' / '), '', a.nota||'']);
-      }
+      if(a.tipo==='cardio') rows2.push([fecha, 'Cardio', '', '', fmtCardio(cardioDe(a)), '']);
+      else rows2.push([fecha, (SUELTOS[a.tipo]||SUELTOS.agarre).etiqueta, a.ejercicio, a.series.map(s=>`${s.valor}${s.unidad}`).join(' / '), '', a.nota||'']);
     });
-    csv += '\n\n' + rows2.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    csv += '\n\n' + aCSV(rows2);
   }
 
   return csv;
