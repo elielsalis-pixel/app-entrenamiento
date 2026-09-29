@@ -80,7 +80,10 @@ const DIAS_ORDEN = ['Push','Pull','Legs','Tren superior','Pierna + brazos'];
 
 function loadState(){
   const raw = localStorage.getItem('entrenoState');
-  if(raw) return JSON.parse(raw);
+  if(raw){
+    try{ return JSON.parse(raw); }
+    catch(e){ localStorage.setItem('entrenoState_danado_' + Date.now(), raw); }
+  }
   return {
     routine: null,          // {days:[{name, exercises:[{nombre,descanso,series,alternativas:[]}]}]}
     history: [],            // sesiones completas
@@ -94,7 +97,183 @@ function loadState(){
   };
 }
 let state = loadState();
-function saveState(){ localStorage.setItem('entrenoState', JSON.stringify(state)); }
+let avisoGuardadoMostrado = false;
+function saveState(){
+  try{
+    localStorage.setItem('entrenoState', JSON.stringify(state));
+    if(avisoGuardadoMostrado){ avisoGuardadoMostrado = false; const b=document.getElementById('avisoGuardado'); if(b) b.remove(); }
+  } catch(e){
+    if(!avisoGuardadoMostrado){
+      avisoGuardadoMostrado = true;
+      const b = document.createElement('div');
+      b.id = 'avisoGuardado';
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:1000;background:var(--danger);color:#fff;padding:10px 16px;font-size:13px;text-align:center';
+      b.textContent = 'No se pudo guardar. Descargá una copia de seguridad (Rutina → Copia de seguridad) y avisá.';
+      document.body.appendChild(b);
+    }
+  }
+}
+
+/* ---------- fotos y audios: IndexedDB (sin el límite de ~5MB del almacenamiento común) ---------- */
+const media = { images: {}, sounds: [] };   // images: nombreEjercicio -> dataURL ; sounds: [{id,name,data}]
+let mediaDB = null;
+function abrirMediaDB(){
+  return new Promise((res, rej)=>{
+    const req = indexedDB.open('entrenoMedia', 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore('media'); };
+    req.onsuccess = ()=>res(req.result);
+    req.onerror = ()=>rej(req.error);
+  });
+}
+function mediaPut(key, value){
+  if(!mediaDB) return Promise.resolve();
+  return new Promise((res, rej)=>{
+    const tx = mediaDB.transaction('media','readwrite');
+    tx.objectStore('media').put(value, key);
+    tx.oncomplete = ()=>res(); tx.onerror = ()=>rej(tx.error);
+  });
+}
+function mediaDel(key){
+  if(!mediaDB) return Promise.resolve();
+  return new Promise((res, rej)=>{
+    const tx = mediaDB.transaction('media','readwrite');
+    tx.objectStore('media').delete(key);
+    tx.oncomplete = ()=>res(); tx.onerror = ()=>rej(tx.error);
+  });
+}
+function mediaClear(){
+  if(!mediaDB) return Promise.resolve();
+  return new Promise((res, rej)=>{
+    const tx = mediaDB.transaction('media','readwrite');
+    tx.objectStore('media').clear();
+    tx.oncomplete = ()=>res(); tx.onerror = ()=>rej(tx.error);
+  });
+}
+function mediaLeerTodo(){
+  return new Promise((res, rej)=>{
+    const out = {};
+    const tx = mediaDB.transaction('media','readonly');
+    const req = tx.objectStore('media').openCursor();
+    req.onsuccess = ()=>{ const c = req.result; if(c){ out[c.key] = c.value; c.continue(); } else res(out); };
+    req.onerror = ()=>rej(req.error);
+  });
+}
+function cargarMediaEnMemoria(todo){
+  media.images = {}; media.sounds = [];
+  Object.keys(todo).forEach(k=>{
+    if(k.startsWith('img:')) media.images[k.slice(4)] = todo[k];
+    else if(k.startsWith('snd:')) media.sounds.push(todo[k]);
+  });
+  media.sounds.sort((a,b)=>a.id-b.id);
+}
+async function iniciarMedia(){
+  try{
+    mediaDB = await abrirMediaDB();
+    // migración única: fotos y audios que estaban dentro del estado pasan a IndexedDB
+    let migrado = false;
+    if(state.customImages){
+      for(const n of Object.keys(state.customImages)) await mediaPut('img:'+n, state.customImages[n]);
+      delete state.customImages; migrado = true;
+    }
+    if(state.customSounds){
+      let id = Date.now();
+      for(const s of state.customSounds){ const snd = {id: id++, name: s.name, data: s.data}; await mediaPut('snd:'+snd.id, snd); }
+      delete state.customSounds; migrado = true;
+    }
+    if(migrado) saveState();
+    cargarMediaEnMemoria(await mediaLeerTodo());
+    render();
+  } catch(e){ /* sin IndexedDB: la app sigue funcionando sin fotos/audios propios */ }
+}
+async function guardarImagen(nombre, dataURL){ media.images[nombre] = dataURL; await mediaPut('img:'+nombre, dataURL); }
+async function quitarImagen(nombre){ delete media.images[nombre]; await mediaDel('img:'+nombre); }
+async function agregarSonido(name, data){ const snd = {id: Date.now(), name, data}; media.sounds.push(snd); await mediaPut('snd:'+snd.id, snd); }
+async function quitarSonido(id){ media.sounds = media.sounds.filter(s=>s.id!==id); await mediaDel('snd:'+id); }
+
+// achica la foto antes de guardarla (lado mayor 900px, JPEG) — una foto de celular pasa de varios MB a ~100KB
+function comprimirImagen(file){
+  return new Promise((res, rej)=>{
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = ()=>{
+      const max = 900;
+      const escala = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width*escala); c.height = Math.round(img.height*escala);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('No se pudo leer la imagen')); };
+    img.src = url;
+  });
+}
+
+/* ---------- copia de seguridad ---------- */
+function armarCopia(){
+  return {
+    app: 'entreno', version: 1, fecha: new Date().toISOString(),
+    state: JSON.parse(JSON.stringify(state)),
+    media: { images: media.images, sounds: media.sounds }
+  };
+}
+function nombreCopia(){ return `entreno-copia-${new Date().toISOString().slice(0,10)}.json`; }
+function descargarCopia(){
+  const blob = new Blob([JSON.stringify(armarCopia())], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nombreCopia();
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  state.ultimaCopia = new Date().toISOString(); saveState(); render();
+}
+async function compartirCopia(){
+  const file = new File([JSON.stringify(armarCopia())], nombreCopia(), {type:'application/json'});
+  try{
+    await navigator.share({files:[file], title:'Copia de seguridad Entreno'});
+    state.ultimaCopia = new Date().toISOString(); saveState(); render();
+  } catch(e){ /* cancelado */ }
+}
+function validarCopia(obj){
+  return obj && obj.app==='entreno' && obj.state && typeof obj.state==='object' && Array.isArray(obj.state.history);
+}
+async function restaurarCopia(obj){
+  if(!validarCopia(obj)) throw new Error('El archivo no es una copia de esta app.');
+  const nuevo = obj.state;
+  nuevo.activeSession = nuevo.activeSession || null;
+  localStorage.setItem('entrenoState', JSON.stringify(nuevo));
+  if(!mediaDB) mediaDB = await abrirMediaDB();
+  await mediaClear();
+  const imgs = (obj.media && obj.media.images) || {};
+  for(const n of Object.keys(imgs)) await mediaPut('img:'+n, imgs[n]);
+  for(const s of ((obj.media && obj.media.sounds) || [])) await mediaPut('snd:'+s.id, s);
+}
+function botonRestaurar(){
+  const box = document.createElement('div');
+  const btn = el(`<button class="btn btn-full">Restaurar desde una copia</button>`);
+  const input = el(`<input type="file" accept="application/json,.json" style="display:none">`);
+  btn.onclick = ()=> input.click();
+  input.onchange = (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async ()=>{
+      let obj;
+      try{ obj = JSON.parse(reader.result); } catch(err){ alert('El archivo no se puede leer.'); return; }
+      if(!validarCopia(obj)){ alert('El archivo no es una copia de esta app.'); return; }
+      const f = new Date(obj.fecha).toLocaleDateString('es-AR');
+      if(!confirm(`¿Restaurar la copia del ${f}? Reemplaza todo lo que hay ahora en la app (${obj.state.history.length} sesiones en la copia).`)) return;
+      try{ await restaurarCopia(obj); location.reload(); }
+      catch(err){ alert('No se pudo restaurar: ' + err.message); }
+    };
+    reader.readAsText(file);
+  };
+  box.appendChild(btn); box.appendChild(input);
+  return box;
+}
+function diasDesdeUltimaCopia(){
+  if(!state.ultimaCopia) return null;
+  return Math.floor((Date.now() - new Date(state.ultimaCopia).getTime()) / 86400000);
+}
 
 /* ---------- migración: recuperar series por día+ejercicio desde el historial ---------- */
 function migrarSetsPorDia(){
@@ -322,6 +501,8 @@ function screenSinRutina(){
 [Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]"></textarea>
     <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="cargarRutina()">Cargar rutina</button>
   </div>`);
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin:20px 0 8px">¿Ya usabas la app y tenés una copia de seguridad?</p>`));
+  wrap.appendChild(botonRestaurar());
   const copyBtn = wrap.querySelector('#btnCopiarPrompt');
   const msg = wrap.querySelector('#promptMsg');
   copyBtn.onclick = ()=>{
@@ -559,6 +740,21 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
   btnTarde.onclick = ()=>{ if(!state.routineTarde || confirm('¿Reemplazar el turno tarde actual?')) cargarTarde(); };
   wrap.appendChild(btnTarde);
 
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Copia de seguridad</p>`));
+  const diasCopia = diasDesdeUltimaCopia();
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Todo lo que cargás vive solo en este celular. La copia es un archivo con tus rutinas, historial, fotos y audios; guardalo en Drive o mandátelo por WhatsApp. ${diasCopia===null?'<b>Todavía no hiciste ninguna copia.</b>':`Última copia: hace ${diasCopia} día${diasCopia===1?'':'s'}.`}</p>`));
+  const copiaRow = el(`<div style="display:flex;gap:8px;margin-bottom:8px"></div>`);
+  const btnDescargar = el(`<button class="btn" style="flex:1">Descargar copia</button>`);
+  btnDescargar.onclick = descargarCopia;
+  copiaRow.appendChild(btnDescargar);
+  if(navigator.canShare && navigator.canShare({files:[new File(['x'],'x.json',{type:'application/json'})]})){
+    const btnCompartir = el(`<button class="btn" style="flex:1">Compartir copia</button>`);
+    btnCompartir.onclick = compartirCopia;
+    copiaRow.appendChild(btnCompartir);
+  }
+  wrap.appendChild(copiaRow);
+  wrap.appendChild(botonRestaurar());
+
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Reiniciar avance</p>`));
   const btnResetSemana = el(`<button class="btn btn-full" style="margin-bottom:8px">Reiniciar semana actual (volver al Día 1 de esta semana)</button>`);
   btnResetSemana.onclick = ()=>{
@@ -594,8 +790,7 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Sonido al terminar el descanso</p>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Por defecto suena un beep. Podés subir varios audios cortos (mp3, m4a, ogg) — si hay más de uno, suena uno al azar cada vez.</p>`));
-  state.customSounds = state.customSounds || [];
-  if(state.customSounds.length){
+  if(media.sounds.length){
     const selectorRow = el(`<div style="display:flex;gap:8px;margin-bottom:10px"></div>`);
     const btnBeep = el(`<button class="btn" style="flex:1;${state.sonidoPreferido!=='custom'?'background:var(--text);color:var(--bg)':''}">Beep predeterminado</button>`);
     const btnCustom = el(`<button class="btn" style="flex:1;${state.sonidoPreferido==='custom'?'background:var(--text);color:var(--bg)':''}">Mis audios</button>`);
@@ -604,14 +799,14 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
     selectorRow.appendChild(btnBeep); selectorRow.appendChild(btnCustom);
     wrap.appendChild(selectorRow);
   }
-  state.customSounds.forEach((snd,i)=>{
+  media.sounds.forEach(snd=>{
     const row = el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
       <span style="flex:1;font-size:13px">🔊 ${snd.name}</span>
     </div>`);
     const testBtn = el(`<button class="btn" style="font-size:12px;padding:5px 10px">Probar</button>`);
     testBtn.onclick = ()=>{ new Audio(snd.data).play().catch(()=>{}); };
     const delBtn = el(`<button class="btn" style="font-size:12px;padding:5px 10px">Quitar</button>`);
-    delBtn.onclick = ()=>{ state.customSounds.splice(i,1); saveState(); render(); };
+    delBtn.onclick = ()=>{ quitarSonido(snd.id).then(()=>render()); };
     row.appendChild(testBtn); row.appendChild(delBtn);
     wrap.appendChild(row);
   });
@@ -624,9 +819,10 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
     if(file.size > 2*1024*1024){ alert('El archivo pesa más de 2MB — elegí uno más corto para que no ralentice la app.'); return; }
     const reader = new FileReader();
     reader.onload = ()=>{
-      state.customSounds.push({name: file.name, data: reader.result});
-      if(state.sonidoPreferido===undefined) state.sonidoPreferido = 'custom';
-      saveState(); render();
+      agregarSonido(file.name, reader.result).then(()=>{
+        if(state.sonidoPreferido===undefined) state.sonidoPreferido = 'custom';
+        saveState(); render();
+      }).catch(()=>alert('No se pudo guardar el audio.'));
     };
     reader.readAsDataURL(file);
   };
@@ -636,46 +832,6 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
   const motToggle = el(`<button class="btn btn-full">${state.motivacionOn===false?'Activar frases motivadoras':'Desactivar frases motivadoras'}</button>`);
   motToggle.onclick = ()=>{ state.motivacionOn = state.motivacionOn===false ? true : false; saveState(); render(); };
   wrap.appendChild(motToggle);
-
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Diagnóstico — datos guardados por ejercicio</p>`));
-  const diagBtn = el(`<button class="btn btn-full" style="margin-bottom:8px">${state.mostrarDiagnostico?'Ocultar':'Ver'} datos guardados</button>`);
-  diagBtn.onclick = ()=>{ state.mostrarDiagnostico = !state.mostrarDiagnostico; saveState(); render(); };
-  wrap.appendChild(diagBtn);
-  if(state.mostrarDiagnostico){
-    const diagBox = el(`<div class="card" style="margin-bottom:16px;font-size:12px"></div>`);
-    const days = state.routine ? state.routine.days : [];
-    if(!days.length){
-      diagBox.appendChild(el(`<p class="muted">Sin ejercicios en la rutina actual.</p>`));
-    }
-    days.forEach(d=>{
-      diagBox.appendChild(el(`<p style="margin:10px 0 4px"><b>— ${d.name} —</b></p>`));
-      d.exercises.forEach(e=>{
-        const key = d.name + '::' + e.nombre;
-        const sets = (state.lastSetsByDayExercise||{})[key];
-        const txt = sets && sets.length
-          ? sets.map(s=>`${s.peso}kg×${s.reps} (${s.tipo})`).join(' · ')
-          : '<span class="muted">sin dato guardado</span>';
-        diagBox.appendChild(el(`<p style="margin-bottom:4px">${e.nombre}: ${txt}</p>`));
-      });
-    });
-    wrap.appendChild(diagBox);
-
-    const btnLog = el(`<button class="btn btn-full" style="margin-bottom:8px">${state.mostrarLog?'Ocultar':'Ver'} historial de cambios (últimos 30)</button>`);
-    btnLog.onclick = ()=>{ state.mostrarLog = !state.mostrarLog; saveState(); render(); };
-    wrap.appendChild(btnLog);
-    if(state.mostrarLog){
-      const logBox = el(`<div class="card" style="margin-bottom:16px;font-size:11px"></div>`);
-      const log = state.logCambios || [];
-      if(!log.length){
-        logBox.appendChild(el(`<p class="muted">Sin cambios registrados todavía.</p>`));
-      }
-      [...log].reverse().slice(0,30).forEach(l=>{
-        const fecha = new Date(l.fecha).toLocaleString('es-AR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-        logBox.appendChild(el(`<p style="margin-bottom:4px">${fecha} · <b>${l.ejercicio}</b>: ${l.pesoAnterior!=null?l.pesoAnterior+'kg → ':''}${l.pesoNuevo}kg <span class="muted">(${l.origen})</span></p>`));
-      });
-      wrap.appendChild(logBox);
-    }
-  }
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Ajustes sugeridos</p>`));
   wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Pegá acá los ajustes de peso que te dé el Project de Entrenamiento (formato AJUSTE: nombre | peso X) — actualiza el peso de referencia para la próxima vez que hagas cada ejercicio, sin tener que esperar a entrenarlo.</p>`));
@@ -745,6 +901,12 @@ function screenInicio(){
 
   if(state.showWeekBanner){
     wrap.appendChild(el(`<div class="banner"><span>Completaste la semana ${state.showWeekBanner} — exportá tu informe para el Project.</span></div>`));
+  }
+  const diasSinCopia = diasDesdeUltimaCopia();
+  if(state.history.length && (diasSinCopia===null || diasSinCopia>=14)){
+    const bCopia = el(`<div class="banner" style="cursor:pointer"><span>${diasSinCopia===null?'Todavía no hiciste una copia de seguridad.':`Hace ${diasSinCopia} días que no hacés una copia de seguridad.`} Tocá para hacerla.</span></div>`);
+    bCopia.onclick = ()=>{ setTab('rutina'); setTimeout(()=>{ const t=[...document.querySelectorAll('#screen p.secondary')].find(p=>p.textContent==='Copia de seguridad'); if(t) t.scrollIntoView({behavior:'smooth'}); },50); };
+    wrap.appendChild(bCopia);
   }
 
   const card = el(`<div class="card" style="margin-bottom:16px">
@@ -941,7 +1103,7 @@ function screenSesion(){
   });
   wrap.appendChild(labels);
 
-  const customImg = state.customImages && state.customImages[ej.nombre];
+  const customImg = media.images[ej.nombre];
   const autoImg = window.buscarImagen && buscarImagen(ej.nombre);
   const imgPath = customImg || autoImg;
   const photoBox = el(`<div class="exphoto"></div>`);
@@ -964,18 +1126,15 @@ function screenSesion(){
   fileInput.onchange = (e)=>{
     const file = e.target.files[0];
     if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ()=>{
-      state.customImages = state.customImages || {};
-      state.customImages[ej.nombre] = reader.result;
-      saveState(); render();
-    };
-    reader.readAsDataURL(file);
+    comprimirImagen(file)
+      .then(dataURL=>guardarImagen(ej.nombre, dataURL))
+      .then(()=>render())
+      .catch(()=>alert('No se pudo guardar la foto.'));
   };
   addRow.appendChild(addFotoBtn); addRow.appendChild(fileInput);
   if(customImg){
     const quitarBtn = el(`<button class="btn" style="font-size:12px;padding:6px 10px">Quitar mi foto</button>`);
-    quitarBtn.onclick = ()=>{ delete state.customImages[ej.nombre]; saveState(); render(); };
+    quitarBtn.onclick = ()=>{ quitarImagen(ej.nombre).then(()=>render()); };
     addRow.appendChild(quitarBtn);
   }
   wrap.appendChild(addRow);
@@ -1322,9 +1481,9 @@ function registrarSetDone(ej,s){
 
 /* ---------- sonido y frases motivadoras ---------- */
 function beep(){
-  if(state.sonidoPreferido==='custom' && state.customSounds && state.customSounds.length){
+  if(state.sonidoPreferido==='custom' && media.sounds.length){
     try{
-      const elegido = state.customSounds[Math.floor(Math.random()*state.customSounds.length)];
+      const elegido = media.sounds[Math.floor(Math.random()*media.sounds.length)];
       const audio = new Audio(elegido.data);
       audio.play().catch(()=>{});
       return;
@@ -2001,6 +2160,7 @@ function generarCSV(){
 
 /* ---------- init ---------- */
 render();
+iniciarMedia();
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
