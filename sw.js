@@ -1,5 +1,5 @@
-const CACHE = 'entreno-v3';
-const FILES = ['index.html', 'manifest.json', 'icon.svg', 'exercise-map.js'];
+const CACHE = 'entreno-v4';
+const FILES = ['index.html', 'manifest.json', 'icon.svg', 'biblioteca.js'];
 
 self.addEventListener('install', e=>{
   e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)));

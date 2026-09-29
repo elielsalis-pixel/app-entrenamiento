@@ -174,7 +174,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('rutina: ver formato', await visible('Cada día empieza con'));
   await tocar('text=Volver');
   // turno tarde desde Rutina
-  await tocar('[role="tab"]:has-text("Turno tarde")');
+  await tocar('[role="tab"]:has-text("Tarde")');
   await page.fill('#tardePaste', TARDE);
   await tocar('text=Guardar turno tarde');
   ok('tarde: guarda rutina', await ev(()=>state.routineTarde && state.routineTarde.exercises.length===4 && state.routineTarde.exercises[3].medida==='kg+m'));
@@ -210,12 +210,52 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('sonidos: quitar audio', await ev(()=>media.sounds.length===0));
   await tocar('text=Volver');
 
+  // --- biblioteca
+  ok('biblioteca: 433 ejercicios con datos completos', await ev(()=>BIBLIOTECA.length===433 && BIBLIOTECA.every(x=>x.nombre && x.patron in PATRONES && x.principal.length && ['baja','media','alta'].includes(x.lumbar))));
+  ok('biblioteca: reconoce tus nombres (fondo de máquina asistido, remo en polea, curl femoral)', await ev(()=>
+    buscarEjercicio('Fondo de máquina asistido').nombre==='Fondos en máquina' && buscarEjercicio('remo en polea').patron==='tiron_h' && buscarEjercicio('Curl femoral').patron==='femoral'));
+  ok('biblioteca: fotos de la base en ejercicios sin ilustración', await ev(()=>imagenDe('Remo con barra').startsWith('ejercicios/fdb/')));
+  ok('reemplazos: mismo movimiento, sin más carga lumbar, sin repetir el día', await ev(()=>{
+    const r = sugerenciasReemplazo('Press banca plano con barra', ['Press inclinado con mancuernas']);
+    return r.length>=5 && r.every(x=>x.patron==='empuje_h' && x.lumbar==='baja' && x.nombre!=='Press inclinado con mancuernas');
+  }));
+  ok('reemplazos: una sentadilla con barra sugiere opciones más suaves para la lumbar primero', await ev(()=>{
+    const r = sugerenciasReemplazo('Sentadilla con barra', []);
+    return r.slice(0,3).every(x=>x.lumbar!=='alta');
+  }));
+  await ev(()=>setTab('rutina'));
+  await tocar('[role="tab"]:has-text("Biblioteca")');
+  ok('biblioteca: pantalla con buscador y lista', await page.isVisible('input[aria-label="Buscar en la biblioteca"]') && (await page.$$('#screen .grupo .item')).length>=50);
+  await page.fill('input[aria-label="Buscar en la biblioteca"]', 'press banca con mancuernas');
+  await page.locator('#screen .item:has-text("Press banca con mancuernas")').first().click();
+  ok('biblioteca: ficha del ejercicio', await visible('Músculo principal') && await page.isVisible('.foto-grande img'));
+  await tocar('button[role="switch"][aria-label="Hay en mi gimnasio"]');
+  ok('biblioteca: marcar "no hay en mi gimnasio"', await ev(()=>state.noDisponibles.includes('Dumbbell_Bench_Press')));
+  ok('reemplazos: no sugiere lo que no hay', await ev(()=>!sugerenciasReemplazo('Press banca plano con barra', []).some(x=>x.id==='Dumbbell_Bench_Press')));
+  await tocar('text=Volver');
+  await tocar('text=Agregar ejercicio propio');
+  await page.fill('#nuevoNombre', 'Press en máquina Hammer del gym');
+  await page.selectOption('#nuevoPatron', 'empuje_h'); await page.selectOption('#nuevoMusculo', 'Pecho');
+  await tocar('text=Guardar ejercicio');
+  ok('biblioteca: agregar ejercicio propio', await ev(()=>state.bibliotecaPropia.length===1 && buscarEjercicio('press en maquina hammer del gym').propio));
+  ok('reemplazos: incluye tus ejercicios propios', await ev(()=>sugerenciasReemplazo('Press banca plano con barra', []).some(x=>x.propio)));
+  // cambiar en la sesión con la biblioteca
+  await ev(()=>{ state.lastByExercise['Press de pecho en máquina'] = {peso:70, reps:10}; saveState(); setTab('inicio'); });
+  await tocar('text=Empezar entrenamiento');
+  await tocar('button:has-text("Cambiar")');
+  ok('cambiar: muestra Project, biblioteca y buscador', await visible('Sugeridas por el Project') && await visible('De la biblioteca') && await page.isVisible('input[aria-label="Buscar ejercicio"]'));
+  await page.fill('input[aria-label="Buscar ejercicio"]', 'press de pecho en maquina');
+  await page.locator('.alt-card:has-text("Press de pecho en máquina") >> text=Solo hoy').first().click();
+  ok('cambiar: aplica el nuevo solo hoy', await ev(()=>state.activeSession.exercises[0].nombre==='Press de pecho en máquina' && state.routine.days[0].exercises[0].nombre==='Press banca plano'));
+  ok('cambiar: precarga los pesos del ejercicio nuevo', await ev(()=>state.activeSession.exercises[0].sets.filter(s=>s.tipo==='Normal').every(s=>s.peso===70)));
+  await tocar('text=Finalizar sesión');
+
   // --- volver arriba al cambiar de pestaña
   await ev(()=>window.scrollTo(0, 400));
   await ev(()=>setTab('rutina'));
   ok('cambiar de pestaña vuelve arriba', await ev(()=>window.scrollY===0));
 
-  // --- sesión de la tarde
+  // --- sesión de la tarde + paso automático al terminar cada ejercicio
   await ev(()=>setTab('inicio'));
   await tocar('text=Empezar turno tarde');
   await page.fill('#cardio-duracion', '30'); await page.fill('#cardio-velocidad', '6.5');
@@ -223,24 +263,48 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('tarde: sensación elegida', await ev(()=>state.activeSession.exercises[0].cardioData.medicionValor==='Difícil, casi no puedo hablar'));
   await tocar('text=Marcar como hecho');
   ok('tarde: cardio hecho', await ev(()=>state.activeSession.exercises[0].cardioHecho));
-  await tocar('button:has-text("Siguiente")');
+  ok('auto: al terminar un ejercicio avisa cuál sigue', await page.isVisible('#cierre:has-text("Sigue Crunch en polea")'));
+  await tocar('#cierre button:has-text("Ir ahora")');
+  ok('auto: "Ir ahora" pasa al siguiente', await ev(()=>state.activeSession.focusIdx===1) && !(await page.isVisible('#cierre')));
   await tocar('button:has-text("Más")');
   ok('tarde: kg+reps sin discos', !(await visible('Calculadora de discos')));
   await tocar('text=Volver');
-  await ev(()=>{ const e=state.activeSession.exercises[1]; e.sets.forEach(s=>{ s.peso=20; s.reps=12; s.done=true; }); saveState(); render(); });
-  await tocar('button:has-text("Siguiente")');
+  await ev(()=>{ const e=state.activeSession.exercises[1]; e.sets.forEach((s,i)=>{ s.peso=20; s.reps=12; if(i<e.sets.length-1) s.done=true; }); saveState(); render(); });
+  await ev(()=>{ const e=state.activeSession.exercises[1]; marcarHecha(e, e.sets.length-1); });
+  ok('auto: muestra la recomendación del ejercicio', await page.isVisible('#cierre:has-text("Dentro del rango")'));
+  await page.waitForTimeout(5600);
+  ok('auto: pasa solo al siguiente a los 5 segundos', await ev(()=>state.activeSession.focusIdx===2) && !(await page.isVisible('#cierre')));
   ok('tarde: medida seg muestra Seg', await page.isVisible('.sets-head span:text-is("Seg")'));
-  await ev(()=>{ const e=state.activeSession.exercises[2]; e.sets.forEach(s=>{ s.seg=60; s.done=true; }); saveState(); render(); });
+  await ev(()=>{ const e=state.activeSession.exercises[2]; e.sets.forEach(s=>{ s.seg=60; }); marcarHecha(e,0); marcarHecha(e,1); });
+  await tocar('#cierre button:has-text("Quedarme")');
+  ok('auto: "Quedarme" cancela el paso', await ev(()=>state.activeSession.focusIdx===2) && !(await page.isVisible('#cierre')));
   await tocar('button:has-text("Siguiente")');
   ok('tarde: medida kg+m muestra Metros', await page.isVisible('.sets-head span:text-is("Metros")'));
-  await ev(()=>{ const e=state.activeSession.exercises[3]; e.sets[0].peso=24; e.sets[0].m=40; e.sets[0].done=true; saveState(); render(); });
-  await tocar('text=Finalizar sesión');
+  ok('último ejercicio: sin "Siguiente", con "Finalizar sesión"', !(await page.isVisible('#screen button:has-text("Siguiente")')) && await page.isVisible('#screen .fila2 button:has-text("Finalizar sesión")'));
+  await ev(()=>{ const e=state.activeSession.exercises[3]; e.sets.forEach(s=>{ s.peso=24; s.m=40; }); marcarHecha(e,0); marcarHecha(e,1); });
+  ok('auto: con todo hecho avisa que finaliza', await page.isVisible('#cierre:has-text("Finalizando en")'));
+  await page.waitForTimeout(5600);
+  ok('auto: finaliza sola la sesión', await ev(()=>!state.activeSession));
   ok('tarde: guarda aparte y no avanza día', await ev(()=>state.historyTarde.length===1 && state.slot===0));
   ok('tarde: resumen', await visible('Sesión completa'));
   await tocar('text=Volver al inicio');
   await tocar('text=Empezar turno tarde');
   ok('tarde: precarga la vez siguiente', await ev(()=>state.activeSession.exercises[3].sets.map(s=>s.peso+'/'+s.m).join(',')==='24/40,24/40'));
+  ok('progresión: compara con la vez pasada en ejercicios sin rango de reps', await ev(()=>{
+    const e = JSON.parse(JSON.stringify(state.activeSession.exercises[2])); e.sets.forEach(s=>{ s.seg=70; s.done=true; }); return recomendacion(e).tipo==='subir';
+  }));
   await tocar('text=Finalizar sesión');
+
+  // --- progresión sugerida en la precarga
+  ok('progresión: si llegaste al tope de reps, precarga el peso siguiente según el equipo', await ev(()=>{
+    state.lastSetsByDayExercise['Pull::Remo en polea'] = [{peso:50,reps:12,tipo:'Normal'},{peso:50,reps:12,tipo:'Normal'},{peso:50,reps:12,tipo:'Normal'}];
+    const sets = seedSets({nombre:'Remo en polea', series:3, repsMin:8, repsMax:12}, 'Pull', true);
+    return sets.every(s=>s.peso===52.5 && s.sugerido===2.5);
+  }));
+  ok('progresión: si no llegaste al tope, no cambia el peso', await ev(()=>{
+    state.lastSetsByDayExercise['Pull::Remo en polea'] = [{peso:50,reps:12,tipo:'Normal'},{peso:50,reps:10,tipo:'Normal'}];
+    return seedSets({nombre:'Remo en polea', series:2, repsMin:8, repsMax:12}, 'Pull', true).every(s=>s.peso===50 && !s.sugerido);
+  }));
 
   // --- sueltos
   await ev(()=>setTab('inicio'));
