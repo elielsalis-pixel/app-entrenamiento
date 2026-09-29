@@ -1642,8 +1642,15 @@ function formSesionRutinaExtra(){
       const ultimo = ultimoRegistroExtra('cardio', it.nombre);
       return {def: it, duracion:'', medicionTipo: ultimo?ultimo.medicionTipo:'sensacion', medicionValor: ultimo?ultimo.medicionValor:'Moderado, hablo con esfuerzo (Zona 2 real)'};
     }
+    const ultimo = ultimoRegistroExtra(it.tipo, it.nombre);
+    const prevSeries = ultimo ? ultimo.series : [];
     const series = [];
-    for(let i=0;i<it.series;i++) series.push({valor:'', unidad: it.unidad});
+    for(let i=0;i<it.series;i++){
+      // precarga con el valor real de la última vez, por posición (igual que en la rutina de gym);
+      // si hoy hay más series que la vez pasada, las extra copian la última conocida.
+      const val = prevSeries.length ? prevSeries[Math.min(i, prevSeries.length-1)].valor : '';
+      series.push({valor: val, unidad: it.unidad});
+    }
     return {def: it, series};
   });
 
@@ -1681,7 +1688,7 @@ function formSesionRutinaExtra(){
       item.series.forEach((s,i)=>{
         const row = el(`<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px"></div>`);
         row.appendChild(el(`<span style="font-size:12px;color:var(--text-muted);width:16px">${i+1}</span>`));
-        const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="${it.unidad}">`);
+        const valorIn = el(`<input type="text" inputmode="decimal" class="set-input" style="flex:1" placeholder="${it.unidad}" value="${s.valor}">`);
         valorIn.onfocus = ()=>valorIn.select();
         valorIn.oninput = ()=>{ s.valor = valorIn.value; };
         row.appendChild(valorIn);
