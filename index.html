@@ -226,21 +226,6 @@ function descargarCopia(){
   setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
   state.ultimaCopia = new Date().toISOString(); saveState(); render();
 }
-async function compartirCopia(){
-  // Chrome solo deja compartir ciertos tipos (imagen, audio, video, PDF, texto): .json no está, .txt sí.
-  const file = new File([JSON.stringify(armarCopia())], nombreCopia().replace('.json','.txt'), {type:'text/plain'});
-  if(navigator.canShare && !navigator.canShare({files:[file]})){
-    alert('Este celular no permite compartir el archivo. Usá "Descargar copia" y subilo a Drive desde Descargas.');
-    return;
-  }
-  try{
-    await navigator.share({files:[file], title:'Copia de seguridad Entreno'});
-    state.ultimaCopia = new Date().toISOString(); saveState(); render();
-  } catch(e){
-    if(e && e.name==='AbortError') return; // lo cancelaste vos
-    alert('No se pudo compartir (' + (e && e.name ? e.name : 'error') + '). Usá "Descargar copia" y subilo a Drive desde Descargas.');
-  }
-}
 function validarCopia(obj){
   return obj && obj.app==='entreno' && obj.state && typeof obj.state==='object' && Array.isArray(obj.state.history);
 }
@@ -258,7 +243,7 @@ async function restaurarCopia(obj){
 function botonRestaurar(){
   const box = document.createElement('div');
   const btn = el(`<button class="btn btn-full">Restaurar desde una copia</button>`);
-  const input = el(`<input type="file" accept="application/json,.json,text/plain,.txt" style="display:none">`);
+  const input = el(`<input type="file" accept="application/json,.json" style="display:none">`);
   btn.onclick = ()=> input.click();
   input.onchange = (e)=>{
     const file = e.target.files[0];
@@ -750,16 +735,11 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? tardeToTex
 
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin:24px 0 8px">Copia de seguridad</p>`));
   const diasCopia = diasDesdeUltimaCopia();
-  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Todo lo que cargás vive solo en este celular. La copia es un archivo con tus rutinas, historial, fotos y audios; guardalo en Drive o mandátelo por WhatsApp. ${diasCopia===null?'<b>Todavía no hiciste ninguna copia.</b>':`Última copia: hace ${diasCopia} día${diasCopia===1?'':'s'}.`}</p>`));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-bottom:8px">Todo lo que cargás vive solo en este celular. La copia es un archivo con tus rutinas, historial, fotos y audios: descargala y subila a Drive desde la carpeta Descargas. ${diasCopia===null?'<b>Todavía no hiciste ninguna copia.</b>':`Última copia: hace ${diasCopia} día${diasCopia===1?'':'s'}.`}</p>`));
   const copiaRow = el(`<div style="display:flex;gap:8px;margin-bottom:8px"></div>`);
   const btnDescargar = el(`<button class="btn" style="flex:1">Descargar copia</button>`);
   btnDescargar.onclick = descargarCopia;
   copiaRow.appendChild(btnDescargar);
-  if(navigator.canShare && navigator.canShare({files:[new File(['x'],'x.txt',{type:'text/plain'})]})){
-    const btnCompartir = el(`<button class="btn" style="flex:1">Compartir copia</button>`);
-    btnCompartir.onclick = compartirCopia;
-    copiaRow.appendChild(btnCompartir);
-  }
   wrap.appendChild(copiaRow);
   wrap.appendChild(botonRestaurar());
 
