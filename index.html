@@ -135,6 +135,7 @@
   #restbar button{height:44px;min-width:50px;border-radius:12px;border:1px solid rgba(128,128,128,.4);background:transparent;color:var(--bg);font-size:14px;font-weight:600}
   #restbar .saltar{background:var(--bg);color:var(--text);border:none;min-width:64px}
   #restbar .progreso{position:absolute;left:0;bottom:0;height:4px;background:var(--success)}
+  .cierre{position:fixed;left:50%;transform:translateX(-50%);width:calc(100% - 24px);max-width:456px;bottom:calc(150px + env(safe-area-inset-bottom));background:var(--surface);border:2px solid var(--accent);border-radius:16px;padding:14px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.25)}
   #tabbar{display:flex;border-top:1px solid var(--border);background:var(--surface);position:fixed;left:50%;transform:translateX(-50%);width:100%;max-width:480px;bottom:0;padding-bottom:env(safe-area-inset-bottom);z-index:40}
   #tabbar button{flex:1;border:none;background:transparent;height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--text-muted);font-size:11px}
   #tabbar button[aria-current="page"]{color:var(--accent);font-weight:600}
@@ -613,6 +614,7 @@ function fmtCorto(v, medida){
 function nuevaSerie(e, tipo, valores, anterior){
   const s = {tipo, done:false, rpe:null, anterior: anterior || null};
   camposDe(e.medida).forEach(c=>{ s[c] = valores && valores[c]!=null ? valores[c] : 0; });
+  if(anterior) s.prev = Object.fromEntries(camposDe(e.medida).map(c=>[c, s[c]]));
   return s;
 }
 // Precarga cada serie con lo hecho la última vez en ese mismo día (clave) y posición.
@@ -637,6 +639,11 @@ function seedSets(e, clave, usarGeneral){
     ...armar('Normal', e.series===undefined ? 3 : e.series, 1)
   ];
   if(!sets.length) sets.push(nuevaSerie(e, 'Normal', base));
+  // progresión sugerida: si la vez pasada llegaste al tope de reps en todas, precarga el peso siguiente
+  if(e.repsMax && esKgReps(e.medida) && porTipo.Normal.length && porTipo.Normal.every(s=>(s.reps||0) >= e.repsMax)){
+    const paso = pasoDe(e.nombre);
+    sets.filter(s=>s.tipo==='Normal').forEach(s=>{ s.peso = Math.round((s.peso + paso)*100)/100; s.sugerido = paso; });
+  }
   return sets;
 }
 function exDone(ej){ return ej.cardio ? !!ej.cardioHecho : ej.sets.every(s=>s.done); }
@@ -842,6 +849,7 @@ function serieLimpia(s, medida){
   return out;
 }
 function finalizarSesion(){
+  cerrarCierre();
   detenerTimer();
   const ses = state.activeSession;
   const tarde = ses.turno==='tarde';
@@ -1584,6 +1592,7 @@ function marcarHecha(ej, si){
   iniciarTimer(ej);
   ej.activa = null;
   saveState(); render();
+  if(exDone(ej)) mostrarCierreEjercicio(ej);
 }
 function sesionSeries(ej){
   const wrap = document.createDocumentFragment();
@@ -1674,7 +1683,7 @@ function stepperCell(ej, s, campo){
 }
 function serieActiva(ej, s, si){
   const box = el(`<div class="serie-activa"></div>`);
-  const cab = el(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span style="font-weight:700;color:var(--accent)">Serie ${si+1}</span>${s.anterior?`<span class="secondary" style="font-size:13px">La vez pasada: ${esc(s.anterior)}</span>`:''}</div></div>`);
+  const cab = el(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span style="font-weight:700;color:var(--accent)">Serie ${si+1}</span>${s.anterior?`<span class="secondary" style="font-size:13px">La vez pasada: ${esc(s.anterior)}</span>`:''}${s.sugerido?`<span style="font-size:13px;color:var(--success);display:inline-flex;align-items:center;gap:2px">${icon('arrowup')} +${fmtKg(s.sugerido)} kg sugerido</span>`:''}</div></div>`);
   const tipo = boton(esc(s.tipo), 'btn-sm', ()=>{ s.tipo = TIPOS[(TIPOS.indexOf(s.tipo)+1) % TIPOS.length]; saveState(); render(); });
   tipo.setAttribute('aria-label', `Tipo de serie: ${s.tipo}. Tocar para cambiar`);
   cab.appendChild(tipo);
@@ -1691,12 +1700,17 @@ function sesionNavegacion(ses){
   const wrap = el(`<div style="margin-top:16px"></div>`);
   const nav = el(`<div class="fila2" style="margin-bottom:10px"></div>`);
   const prev = boton(`${icon('chevleft')} Anterior`, 'btn-full', ()=>{ ses.focusIdx--; saveState(); render(); });
-  const next = boton(`Siguiente ${icon('chevright')}`, 'btn-full', ()=>{ ses.focusIdx++; saveState(); render(); mostrarMotivacion(frase(FRASES_SIGUIENTE)); });
   if(ses.focusIdx===0) prev.disabled = true;
-  if(ses.focusIdx>=ses.exercises.length-1) next.disabled = true;
-  nav.appendChild(prev); nav.appendChild(next);
-  wrap.appendChild(nav);
-  wrap.appendChild(boton('Finalizar sesión', 'btn-primary btn-full', pedirFinalizar));
+  nav.appendChild(prev);
+  const ultimo = ses.focusIdx >= ses.exercises.length-1;
+  if(ultimo){
+    nav.appendChild(boton('Finalizar sesión', 'btn-primary btn-full', pedirFinalizar));
+    wrap.appendChild(nav);
+  } else {
+    nav.appendChild(boton(`Siguiente ${icon('chevright')}`, 'btn-full', ()=>{ ses.focusIdx++; saveState(); render(); mostrarMotivacion(frase(FRASES_SIGUIENTE)); }));
+    wrap.appendChild(nav);
+    wrap.appendChild(boton('Finalizar sesión', 'btn-primary btn-full', pedirFinalizar));
+  }
   return wrap;
 }
 function screenFoto(){
@@ -1803,6 +1817,7 @@ function renderCardioCard(ej){
     : boton(`${icon('check')} Marcar como hecho`, 'btn-ok btn-full', ()=>{
         if(!(parseFloat(String(ej.cardioData.duracion).replace(',','.'))>0)){ alert('Cargá la duración.'); return; }
         ej.cardioHecho = true; saveState(); render();
+        mostrarCierreEjercicio(ej);
       });
   hecho.style.marginTop = '8px';
   box.appendChild(hecho);
@@ -2316,6 +2331,72 @@ function screenNuevoEjercicio(){
   }));
   wrap.lastChild.style.marginTop = '14px';
   return wrap;
+}
+
+/* ---------- al terminar un ejercicio: recomendación y paso automático ---------- */
+const PASO_PESO = {'Barra':2.5, 'Barra Z':2.5, 'Smith':2.5, 'Mancuernas':2, 'Máquina':5, 'Polea':2.5, 'Kettlebell':4};
+function pasoDe(nombre){ const x = buscarEjercicio(nombre); return (x && PASO_PESO[x.equipo]) || 2.5; }
+function fmtKg(n){ return String(Math.round(n*100)/100).replace('.', ','); }
+function recomendacion(ej){
+  if(ej.cardio) return null;
+  const hechas = ej.sets.filter(s=>s.done && (s.tipo==='Normal' || s.tipo==='Fallo'));
+  if(!hechas.length) return null;
+  const campos = camposDe(ej.medida);
+  if(campos.includes('reps') && ej.repsMax){
+    if(hechas.every(s=>(s.reps||0) >= ej.repsMax)){
+      if(campos.includes('peso')){
+        const nuevo = Math.max(...hechas.map(s=>s.peso||0)) + pasoDe(ej.nombre);
+        return {tipo:'subir', texto:`Llegaste a ${ej.repsMax} reps en todas las series. La próxima te precargo ${fmtKg(nuevo)} kg.`};
+      }
+      return {tipo:'subir', texto:`Llegaste al tope de repeticiones. La próxima sumá dificultad: más lento, con lastre o una variante más exigente.`};
+    }
+    if(ej.repsMin && hechas.some(s=>(s.reps||0) < ej.repsMin)){
+      return {tipo:'bajar', texto:`Alguna serie quedó por debajo de ${ej.repsMin} reps. La próxima mantené el peso o bajalo un poco.`};
+    }
+    return {tipo:'mantener', texto:`Dentro del rango. La próxima mantené el peso y buscá llegar a ${ej.repsMax} reps en todas.`};
+  }
+  // sin rango de repeticiones (segundos, metros...): comparación con la vez pasada, serie por serie
+  const comparables = hechas.filter(s=>s.prev);
+  if(!comparables.length) return {tipo:'info', texto:'Primera vez que lo registrás así. La próxima te muestro cómo te fue comparado con hoy.'};
+  const suma = s=>campos.reduce((a,c)=>a + (s[c]||0), 0);
+  const hoy = comparables.reduce((a,s)=>a + suma(s), 0);
+  const antes = comparables.reduce((a,s)=>a + suma(s.prev), 0);
+  if(hoy > antes) return {tipo:'subir', texto:'Mejoraste respecto de la vez pasada. Seguí sumando de a poco.'};
+  if(hoy === antes) return {tipo:'mantener', texto:'Igual que la vez pasada. La próxima intentá sumar un poco.'};
+  return {tipo:'bajar', texto:'Hoy rendiste menos que la vez pasada. Pasa: mantené y seguí.'};
+}
+function siguientePendiente(ses, desde){
+  for(let k=1; k<=ses.exercises.length; k++){
+    const i = (desde + k) % ses.exercises.length;
+    if(!exDone(ses.exercises[i])) return i;
+  }
+  return -1;
+}
+let cierreIntervalo = null;
+function cerrarCierre(){ clearInterval(cierreIntervalo); const c = document.getElementById('cierre'); if(c) c.remove(); }
+function mostrarCierreEjercicio(ej){
+  const ses = state.activeSession;
+  cerrarCierre();
+  const todo = ses.exercises.every(exDone);
+  const sig = todo ? -1 : siguientePendiente(ses, ses.exercises.indexOf(ej));
+  const rec = recomendacion(ej);
+  const colores = {subir:'var(--success)', bajar:'var(--warn)', mantener:'var(--text-2)', info:'var(--text-2)'};
+  const caja = el(`<div id="cierre" class="cierre" role="dialog" aria-live="polite" aria-label="${todo?'Sesión completa':'Ejercicio completo'}">
+    <p style="font-weight:700;font-size:17px;margin-bottom:6px">${todo ? 'Sesión completa' : `${esc(ej.nombre)}: listo`}</p>
+    ${rec ? `<p style="font-size:14px;color:${colores[rec.tipo]};margin-bottom:10px">${esc(rec.texto)}</p>` : ''}
+    <p class="secondary cuenta" style="font-size:13px;margin-bottom:12px"></p>
+    <div class="fila2"></div>
+  </div>`);
+  let quedan = 5;
+  const accion = todo ? ()=>{ cerrarCierre(); finalizarSesion(); }
+    : ()=>{ cerrarCierre(); ses.focusIdx = sig; saveState(); render(); mostrarMotivacion(frase(FRASES_SIGUIENTE)); };
+  const pintar = ()=>{ caja.querySelector('.cuenta').textContent = todo ? `Finalizando en ${quedan} s` : `Sigue ${ses.exercises[sig].nombre} en ${quedan} s`; };
+  const botones = caja.querySelector('.fila2');
+  botones.appendChild(boton(todo ? 'Seguir entrenando' : 'Quedarme', 'btn-full', cerrarCierre));
+  botones.appendChild(boton(todo ? 'Finalizar ahora' : 'Ir ahora', 'btn-primary btn-full', accion));
+  pintar();
+  document.body.appendChild(caja);
+  cierreIntervalo = setInterval(()=>{ quedan--; if(quedan<=0) accion(); else pintar(); }, 1000);
 }
 
 /* ---------- init ---------- */

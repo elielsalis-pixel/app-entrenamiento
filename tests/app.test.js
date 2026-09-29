@@ -255,7 +255,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await ev(()=>setTab('rutina'));
   ok('cambiar de pestaña vuelve arriba', await ev(()=>window.scrollY===0));
 
-  // --- sesión de la tarde
+  // --- sesión de la tarde + paso automático al terminar cada ejercicio
   await ev(()=>setTab('inicio'));
   await tocar('text=Empezar turno tarde');
   await page.fill('#cardio-duracion', '30'); await page.fill('#cardio-velocidad', '6.5');
@@ -263,24 +263,48 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('tarde: sensación elegida', await ev(()=>state.activeSession.exercises[0].cardioData.medicionValor==='Difícil, casi no puedo hablar'));
   await tocar('text=Marcar como hecho');
   ok('tarde: cardio hecho', await ev(()=>state.activeSession.exercises[0].cardioHecho));
-  await tocar('button:has-text("Siguiente")');
+  ok('auto: al terminar un ejercicio avisa cuál sigue', await page.isVisible('#cierre:has-text("Sigue Crunch en polea")'));
+  await tocar('#cierre button:has-text("Ir ahora")');
+  ok('auto: "Ir ahora" pasa al siguiente', await ev(()=>state.activeSession.focusIdx===1) && !(await page.isVisible('#cierre')));
   await tocar('button:has-text("Más")');
   ok('tarde: kg+reps sin discos', !(await visible('Calculadora de discos')));
   await tocar('text=Volver');
-  await ev(()=>{ const e=state.activeSession.exercises[1]; e.sets.forEach(s=>{ s.peso=20; s.reps=12; s.done=true; }); saveState(); render(); });
-  await tocar('button:has-text("Siguiente")');
+  await ev(()=>{ const e=state.activeSession.exercises[1]; e.sets.forEach((s,i)=>{ s.peso=20; s.reps=12; if(i<e.sets.length-1) s.done=true; }); saveState(); render(); });
+  await ev(()=>{ const e=state.activeSession.exercises[1]; marcarHecha(e, e.sets.length-1); });
+  ok('auto: muestra la recomendación del ejercicio', await page.isVisible('#cierre:has-text("Dentro del rango")'));
+  await page.waitForTimeout(5600);
+  ok('auto: pasa solo al siguiente a los 5 segundos', await ev(()=>state.activeSession.focusIdx===2) && !(await page.isVisible('#cierre')));
   ok('tarde: medida seg muestra Seg', await page.isVisible('.sets-head span:text-is("Seg")'));
-  await ev(()=>{ const e=state.activeSession.exercises[2]; e.sets.forEach(s=>{ s.seg=60; s.done=true; }); saveState(); render(); });
+  await ev(()=>{ const e=state.activeSession.exercises[2]; e.sets.forEach(s=>{ s.seg=60; }); marcarHecha(e,0); marcarHecha(e,1); });
+  await tocar('#cierre button:has-text("Quedarme")');
+  ok('auto: "Quedarme" cancela el paso', await ev(()=>state.activeSession.focusIdx===2) && !(await page.isVisible('#cierre')));
   await tocar('button:has-text("Siguiente")');
   ok('tarde: medida kg+m muestra Metros', await page.isVisible('.sets-head span:text-is("Metros")'));
-  await ev(()=>{ const e=state.activeSession.exercises[3]; e.sets[0].peso=24; e.sets[0].m=40; e.sets[0].done=true; saveState(); render(); });
-  await tocar('text=Finalizar sesión');
+  ok('último ejercicio: sin "Siguiente", con "Finalizar sesión"', !(await page.isVisible('#screen button:has-text("Siguiente")')) && await page.isVisible('#screen .fila2 button:has-text("Finalizar sesión")'));
+  await ev(()=>{ const e=state.activeSession.exercises[3]; e.sets.forEach(s=>{ s.peso=24; s.m=40; }); marcarHecha(e,0); marcarHecha(e,1); });
+  ok('auto: con todo hecho avisa que finaliza', await page.isVisible('#cierre:has-text("Finalizando en")'));
+  await page.waitForTimeout(5600);
+  ok('auto: finaliza sola la sesión', await ev(()=>!state.activeSession));
   ok('tarde: guarda aparte y no avanza día', await ev(()=>state.historyTarde.length===1 && state.slot===0));
   ok('tarde: resumen', await visible('Sesión completa'));
   await tocar('text=Volver al inicio');
   await tocar('text=Empezar turno tarde');
   ok('tarde: precarga la vez siguiente', await ev(()=>state.activeSession.exercises[3].sets.map(s=>s.peso+'/'+s.m).join(',')==='24/40,24/40'));
+  ok('progresión: compara con la vez pasada en ejercicios sin rango de reps', await ev(()=>{
+    const e = JSON.parse(JSON.stringify(state.activeSession.exercises[2])); e.sets.forEach(s=>{ s.seg=70; s.done=true; }); return recomendacion(e).tipo==='subir';
+  }));
   await tocar('text=Finalizar sesión');
+
+  // --- progresión sugerida en la precarga
+  ok('progresión: si llegaste al tope de reps, precarga el peso siguiente según el equipo', await ev(()=>{
+    state.lastSetsByDayExercise['Pull::Remo en polea'] = [{peso:50,reps:12,tipo:'Normal'},{peso:50,reps:12,tipo:'Normal'},{peso:50,reps:12,tipo:'Normal'}];
+    const sets = seedSets({nombre:'Remo en polea', series:3, repsMin:8, repsMax:12}, 'Pull', true);
+    return sets.every(s=>s.peso===52.5 && s.sugerido===2.5);
+  }));
+  ok('progresión: si no llegaste al tope, no cambia el peso', await ev(()=>{
+    state.lastSetsByDayExercise['Pull::Remo en polea'] = [{peso:50,reps:12,tipo:'Normal'},{peso:50,reps:10,tipo:'Normal'}];
+    return seedSets({nombre:'Remo en polea', series:2, repsMin:8, repsMax:12}, 'Pull', true).every(s=>s.peso===50 && !s.sugerido);
+  }));
 
   // --- sueltos
   await ev(()=>setTab('inicio'));
