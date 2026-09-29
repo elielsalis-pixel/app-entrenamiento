@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#141414">
 <title>Entrenamiento</title>
 <link rel="manifest" href="manifest.json">
-<script src="exercise-map.js"></script>
+<script src="biblioteca.js"></script>
 <style>
   :root{
     --bg:#f4f3f0; --surface:#ffffff; --surface-2:#eeece7;
@@ -810,40 +810,6 @@ function notificar(titulo, cuerpo){
 
 
 /* ---------- sustituir ejercicio ---------- */
-function screenSustituir(){
-  const ses = state.activeSession;
-  const ej = ses.exercises[sustEjIdx];
-  const wrap = document.createElement('div');
-  wrap.appendChild(botonVolver(()=>{ setSessionView('activa'); render(); }));
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:4px">Sustituir</p>`));
-  wrap.appendChild(el(`<h2 style="margin-bottom:16px">${esc(ej.nombre)}</h2>`));
-  (ej.alternativas||[]).forEach(alt=>{
-    const card = el(`<div class="alt-card" style="flex-direction:column;align-items:stretch;gap:8px">
-      <div><p style="font-weight:600;font-size:14px">${alt.nombre}</p><p class="muted" style="font-size:12px">${alt.detalle||''}</p></div>
-    </div>`);
-    const btnRow = el(`<div style="display:flex;gap:8px"></div>`);
-    const btnHoy = el(`<button class="btn" style="flex:1;font-size:12px;padding:6px 10px">Solo hoy</button>`);
-    btnHoy.onclick = ()=>{ ej.nombre = alt.nombre; setSessionView('activa'); render(); };
-    const btnSiempre = el(`<button class="btn" style="flex:1;font-size:12px;padding:6px 10px">Para siempre</button>`);
-    btnSiempre.onclick = ()=>{
-      if(confirm(`¿Reemplazar "${ej.nombre}" por "${alt.nombre}" en la rutina para todas las semanas?`)){
-        const lista = ses.turno==='tarde' ? state.routineTarde.exercises : state.routine.days[ses.dayIdx % state.routine.days.length].exercises;
-        const orig = lista.find(x=>x.nombre===ej.nombre);
-        if(orig) orig.nombre = alt.nombre;
-        ej.nombre = alt.nombre;
-        saveState();
-        setSessionView('activa'); render();
-      }
-    };
-    btnRow.appendChild(btnHoy); btnRow.appendChild(btnSiempre);
-    card.appendChild(btnRow);
-    wrap.appendChild(card);
-  });
-  if(!(ej.alternativas||[]).length){
-    wrap.appendChild(el(`<p class="muted" style="font-size:13px">No hay sustitutos precargados para este ejercicio.</p>`));
-  }
-  return wrap;
-}
 
 /* ---------- finalizar sesión ---------- */
 function contarSeries(ses){
@@ -1114,8 +1080,8 @@ function botonVolver(onClick){
 }
 function etiqueta(txt){ return el(`<p class="label">${esc(txt)}</p>`); }
 function boton(html, clase, onClick){ const b = el(`<button class="btn ${clase||''}">${html}</button>`); b.onclick = onClick; return b; }
-function itemFila({icono, titulo, sub, derecha, onClick}){
-  const it = el(`<${onClick?'button':'div'} class="item">${icono?`<span class="item-icono">${icon(icono)}</span>`:''}<span class="item-texto"><span style="display:block">${esc(titulo)}</span>${sub?`<span class="item-sub" style="display:block">${esc(sub)}</span>`:''}</span></${onClick?'button':'div'}>`);
+function itemFila({icono, iconoHtml, titulo, sub, derecha, onClick}){
+  const it = el(`<${onClick?'button':'div'} class="item">${iconoHtml || (icono?`<span class="item-icono">${icon(icono)}</span>`:'')}<span class="item-texto"><span style="display:block">${esc(titulo)}</span>${sub?`<span class="item-sub" style="display:block">${esc(sub)}</span>`:''}</span></${onClick?'button':'div'}>`);
   if(derecha) it.appendChild(typeof derecha==='string' ? el(derecha) : derecha);
   if(onClick) it.onclick = onClick;
   return it;
@@ -1159,8 +1125,8 @@ const TABS = [
   {id:'historial', label:'Historial', icon:'history'},
   {id:'ajustes', label:'Ajustes', icon:'gear'}
 ];
-let rutinaVista = 'manana';   // manana | tarde
-let rutinaSub = null;         // null | 'nueva' | 'tarde'
+let rutinaVista = 'manana';   // manana | tarde | biblioteca
+let rutinaSub = null;         // null | 'nueva' | 'tarde' | 'ejercicio' | 'nuevoEjercicio'
 let ajustesVista = null;      // null | 'sonidos' | 'ajuste'
 let histVista = 'sesiones';   // sesiones | progreso
 let histDetalle = null;       // {lista, i}
@@ -1178,7 +1144,7 @@ function renderTabbar(){
 }
 function claveVista(){
   const s = state.activeSession;
-  return [currentTab, sessionView, s ? s.focusIdx : '', editDayIdx, rutinaVista, rutinaSub, ajustesVista, histVista, JSON.stringify(histDetalle), extraVista].join('|');
+  return [currentTab, sessionView, s ? s.focusIdx : '', editDayIdx, rutinaVista, rutinaSub, bibDetalle, ajustesVista, histVista, JSON.stringify(histDetalle), extraVista].join('|');
 }
 function render(){
   renderTabbar();
@@ -1319,9 +1285,12 @@ function screenRutina(){
   if(editDayIdx!==null) return screenEditarDia(editDayIdx);
   if(rutinaSub==='nueva') return screenRutinaNueva();
   if(rutinaSub==='tarde') return screenEditarTarde();
+  if(rutinaSub==='ejercicio') return screenEjercicioBiblioteca();
+  if(rutinaSub==='nuevoEjercicio') return screenNuevoEjercicio();
   const wrap = document.createElement('div');
   wrap.appendChild(encabezado('Rutina'));
-  wrap.appendChild(segmentado([['manana', `Mañana · ${diasPorSemana()} días`], ['tarde', 'Turno tarde']], rutinaVista, (v)=>{ rutinaVista = v; render(); }));
+  wrap.appendChild(segmentado([['manana', 'Mañana'], ['tarde', 'Tarde'], ['biblioteca', 'Biblioteca']], rutinaVista, (v)=>{ rutinaVista = v; render(); }));
+  if(rutinaVista==='biblioteca'){ wrap.appendChild(contenidoBiblioteca()); return wrap; }
 
   if(rutinaVista==='tarde'){
     if(!state.routineTarde) return (wrap.appendChild(contenidoEditarTarde()), wrap);
@@ -1577,7 +1546,6 @@ function sesionEncabezado(ses){
   wrap.appendChild(nombres);
   return wrap;
 }
-function imagenDe(nombre){ return media.images[nombre] || (window.buscarImagen && buscarImagen(nombre)) || null; }
 function sesionEjercicio(ej){
   const wrap = document.createDocumentFragment();
   const img = ej.cardio ? null : imagenDe(ej.nombre);
@@ -2116,6 +2084,234 @@ function screenDetalleSesion(){
     lista.appendChild(card);
   });
   wrap.appendChild(lista);
+  return wrap;
+}
+
+/* ---------- biblioteca de ejercicios ---------- */
+// mismo criterio que herramientas/biblioteca/generar.py: minúsculas, sin acentos ni signos
+function normalizarNombre(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+}
+const BIB_POR_ALIAS = new Map();
+BIBLIOTECA.forEach(x=>x.alias.forEach(a=>BIB_POR_ALIAS.set(a, x)));
+const ORDEN_LUMBAR = {baja:0, media:1, alta:2};
+const MUSCULOS = ['Pecho','Dorsales','Espalda media','Hombros','Trapecios','Bíceps','Tríceps','Antebrazos','Cuádriceps','Isquiotibiales','Glúteos','Aductores','Abductores','Gemelos','Abdominales','Zona lumbar'];
+const EQUIPOS = ['Barra','Mancuernas','Polea','Máquina','Smith','Peso corporal','Kettlebell','Barra Z','Banda','Balón medicinal','Otro'];
+
+function bibliotecaCompleta(){ return [...BIBLIOTECA, ...(state.bibliotecaPropia||[])]; }
+function buscarEjercicio(nombre){
+  const k = normalizarNombre(nombre);
+  return BIB_POR_ALIAS.get(k) || (state.bibliotecaPropia||[]).find(x=>normalizarNombre(x.nombre)===k) || null;
+}
+function disponible(x){ return !(state.noDisponibles||[]).includes(x.id); }
+function imagenDe(nombre){
+  const x = buscarEjercicio(nombre);
+  return media.images[nombre] || (x && (x.ilustracion || x.fotos[0])) || null;
+}
+// Reemplazos: mismo patrón de movimiento, disponibles en tu gimnasio y fuera del día.
+// Ordena por músculo en común y castiga los que cargan más la zona lumbar que el original.
+function sugerenciasReemplazo(nombre, excluir){
+  const base = buscarEjercicio(nombre);
+  if(!base) return [];
+  const fuera = new Set((excluir||[]).map(normalizarNombre));
+  return bibliotecaCompleta()
+    .filter(x=>x.id!==base.id && x.patron===base.patron && disponible(x) && !fuera.has(normalizarNombre(x.nombre)))
+    .map(x=>{
+      let p = 0;
+      if(x.principal.some(m=>base.principal.includes(m))) p += 3;
+      p += 0.5 * x.secundarios.filter(m=>base.secundarios.includes(m)).length;
+      if(x.mecanica && x.mecanica===base.mecanica) p += 1;
+      if(x.medida===base.medida) p += 1;
+      p -= ORDEN_LUMBAR[x.lumbar];                  // a igualdad, primero lo más suave para la lumbar
+      const dl = ORDEN_LUMBAR[x.lumbar] - ORDEN_LUMBAR[base.lumbar];
+      if(dl > 0) p -= 3*dl;                          // y nunca por encima del original salvo que no quede otra
+      if(x.nivel==='Avanzado') p -= 1;
+      return {x, p};
+    })
+    .sort((a,b)=>b.p - a.p)
+    .slice(0, 10)
+    .map(o=>o.x);
+}
+function buscarEnBiblioteca(texto, patron){
+  const q = normalizarNombre(texto);
+  return bibliotecaCompleta().filter(x=>{
+    if(patron && x.patron!==patron) return false;
+    if(!q) return true;
+    return x.alias.some(a=>a.includes(q)) || normalizarNombre(x.nombre).includes(q) || x.principal.some(m=>normalizarNombre(m).includes(q)) || normalizarNombre(x.equipo).includes(q);
+  });
+}
+function miniaturaEjercicio(x, tam){
+  const img = x.ilustracion || x.fotos[0] || null;
+  return `<span class="miniatura" style="width:${tam}px;height:${tam}px">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : icon(x.patron==='cardio' ? 'run' : 'photo')}</span>`;
+}
+function subtituloEjercicio(x){
+  const partes = [x.principal.join(', '), x.equipo];
+  if(x.lumbar!=='baja') partes.push(`carga lumbar ${x.lumbar}`);
+  return partes.join(' · ');
+}
+function filaEjercicio(x, onClick, derecha){
+  const sub = subtituloEjercicio(x) + (disponible(x) ? '' : ' · no disponible') + (x.propio ? ' · propio' : '');
+  return itemFila({iconoHtml: miniaturaEjercicio(x, 44), titulo: x.nombre, sub, derecha, onClick});
+}
+
+/* ---------- sustituir ejercicio en la sesión ---------- */
+function aplicarSustitucion(ej, nuevoNombre, paraSiempre){
+  const ses = state.activeSession;
+  const tarde = ses.turno==='tarde';
+  const lista = tarde ? state.routineTarde.exercises : state.routine.days[ses.dayIdx % state.routine.days.length].exercises;
+  const orig = lista.find(x=>x.nombre===ej.nombre);
+  const lib = buscarEjercicio(nuevoNombre);
+  const medidaNueva = lib && lib.medida!=='cardio' ? (lib.medida==='kg+reps' && !tarde ? undefined : lib.medida) : ej.medida;
+  if(paraSiempre && orig){
+    orig.nombre = nuevoNombre;
+    if(medidaNueva===undefined) delete orig.medida; else orig.medida = medidaNueva;
+  }
+  const nada = !ej.sets.some(s=>s.done);
+  ej.nombre = nuevoNombre;
+  ej.medida = medidaNueva;
+  if(nada){
+    // todavía no hiciste series: precarga con lo que hiciste la última vez en el ejercicio nuevo
+    const cuenta = t=>ej.sets.filter(s=>s.tipo===t).length;
+    const def = {nombre:nuevoNombre, medida:medidaNueva, series: ej.sets.length - cuenta('Calentamiento') - cuenta('Aproximación'),
+                 calentamiento: cuenta('Calentamiento'), aproximacion: cuenta('Aproximación'), repsMin: ej.repsMin, repsMax: ej.repsMax};
+    ej.sets = seedSets(def, tarde ? TARDE_KEY : ses.dayName, !tarde);
+  }
+  ej.activa = null;
+  saveState();
+  setSessionView('activa'); render();
+}
+function opcionSustituto(ej, nombre, detalle){
+  const x = buscarEjercicio(nombre);
+  const card = el(`<div class="alt-card"></div>`);
+  card.appendChild(x ? filaEjercicio(x) : el(`<div class="item" style="padding:0;border:none;min-height:0"><span class="item-texto"><span style="display:block;font-weight:600">${esc(nombre)}</span>${detalle?`<span class="item-sub" style="display:block">${esc(detalle)}</span>`:''}</span></div>`));
+  if(x) card.firstChild.style.cssText = 'padding:0;border:none;min-height:0';
+  const fila = el(`<div class="fila2"></div>`);
+  fila.appendChild(boton('Solo hoy', 'btn-sm btn-full', ()=>aplicarSustitucion(ej, nombre, false)));
+  fila.appendChild(boton('Para siempre', 'btn-sm btn-full', ()=>{
+    if(confirm(`¿Reemplazar "${ej.nombre}" por "${nombre}" en la rutina para todas las semanas?`)) aplicarSustitucion(ej, nombre, true);
+  }));
+  card.appendChild(fila);
+  return card;
+}
+function screenSustituir(){
+  const ses = state.activeSession;
+  const ej = ses.exercises[sustEjIdx];
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ setSessionView('activa'); render(); }));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:4px">Cambiar</p>`));
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">${esc(ej.nombre)}</h2>`));
+  const enElDia = ses.exercises.map(e=>e.nombre);
+  if((ej.alternativas||[]).length){
+    wrap.appendChild(etiqueta('Sugeridas por el Project'));
+    ej.alternativas.forEach(alt=>wrap.appendChild(opcionSustituto(ej, alt.nombre, alt.detalle)));
+  }
+  const yaMostradas = new Set((ej.alternativas||[]).map(a=>normalizarNombre(a.nombre)));
+  const sugeridas = sugerenciasReemplazo(ej.nombre, enElDia).filter(x=>!yaMostradas.has(normalizarNombre(x.nombre)));
+  wrap.appendChild(etiqueta('De la biblioteca'));
+  if(!buscarEjercicio(ej.nombre)) wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:8px">Este ejercicio no está en la biblioteca, así que no puedo sugerir parecidos. Buscá uno abajo.</p>`));
+  else if(!sugeridas.length) wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:8px">No hay otros del mismo tipo disponibles. Buscá uno abajo.</p>`));
+  sugeridas.forEach(x=>wrap.appendChild(opcionSustituto(ej, x.nombre)));
+
+  wrap.appendChild(etiqueta('Buscar otro ejercicio'));
+  const buscador = el(`<input type="search" class="set-input" style="text-align:left" placeholder="Nombre, músculo o equipo" aria-label="Buscar ejercicio">`);
+  const resultados = el(`<div></div>`);
+  buscador.oninput = ()=>{
+    resultados.innerHTML = '';
+    if(normalizarNombre(buscador.value).length < 2) return;
+    buscarEnBiblioteca(buscador.value).filter(disponible).slice(0, 15).forEach(x=>resultados.appendChild(opcionSustituto(ej, x.nombre)));
+  };
+  wrap.appendChild(buscador);
+  wrap.appendChild(resultados);
+  return wrap;
+}
+
+/* ---------- pantalla: biblioteca (dentro de Rutina) ---------- */
+let bibTexto = '';
+let bibPatron = '';
+let bibDetalle = null;   // id del ejercicio abierto
+function pintarListaBiblioteca(caja, contador){
+  const lista = buscarEnBiblioteca(bibTexto, bibPatron);
+  contador.textContent = `${lista.length} ejercicio${lista.length===1?'':'s'}`;
+  caja.innerHTML = '';
+  const g = grupo();
+  lista.slice(0, 80).forEach(x=>g.appendChild(filaEjercicio(x, ()=>{ bibDetalle = x.id; rutinaSub = 'ejercicio'; render(); }, chevron())));
+  caja.appendChild(g);
+  if(lista.length > 80) caja.appendChild(el(`<p class="secondary" style="font-size:13px;margin-top:8px">Mostrando 80 de ${lista.length}. Escribí algo para achicar la lista.</p>`));
+}
+function contenidoBiblioteca(){
+  const box = document.createElement('div');
+  box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Los ejercicios que usa la app para sugerir reemplazos. Marcá los que no hay en tu gimnasio y agregá los tuyos.</p>`));
+  const buscador = el(`<input type="search" class="set-input" style="text-align:left;margin-bottom:8px" placeholder="Buscar por nombre, músculo o equipo" aria-label="Buscar en la biblioteca" value="${esc(bibTexto)}">`);
+  const filtro = el(`<select class="set-select" aria-label="Tipo de movimiento" style="margin-bottom:8px"><option value="">Todos los movimientos</option>${Object.entries(PATRONES).map(([k,v])=>`<option value="${k}" ${k===bibPatron?'selected':''}>${esc(v)}</option>`).join('')}</select>`);
+  const contador = el(`<p class="muted" style="font-size:12px;margin-bottom:8px"></p>`);
+  const caja = el(`<div></div>`);
+  buscador.oninput = ()=>{ bibTexto = buscador.value; pintarListaBiblioteca(caja, contador); };
+  filtro.onchange = ()=>{ bibPatron = filtro.value; pintarListaBiblioteca(caja, contador); };
+  box.appendChild(buscador); box.appendChild(filtro);
+  box.appendChild(boton(`${icon('plus')} Agregar ejercicio propio`, 'btn-dashed btn-full', ()=>{ rutinaSub = 'nuevoEjercicio'; render(); }));
+  box.lastChild.style.marginBottom = '10px';
+  box.appendChild(contador); box.appendChild(caja);
+  pintarListaBiblioteca(caja, contador);
+  return box;
+}
+function screenEjercicioBiblioteca(){
+  const x = bibliotecaCompleta().find(e=>e.id===bibDetalle);
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ rutinaSub = null; render(); }));
+  if(!x){ wrap.appendChild(el(`<p class="secondary">No se encontró el ejercicio.</p>`)); return wrap; }
+  wrap.appendChild(el(`<h1 style="margin-bottom:12px">${esc(x.nombre)}</h1>`));
+  const imgs = [x.ilustracion, ...x.fotos].filter(Boolean);
+  if(imgs.length){
+    const fotos = el(`<div style="display:grid;grid-template-columns:repeat(${Math.min(imgs.length,2)},minmax(0,1fr));gap:8px;margin-bottom:12px"></div>`);
+    imgs.slice(0,2).forEach(src=>fotos.appendChild(el(`<div class="foto-grande" style="margin:0"><img src="${esc(src)}" alt="${esc(x.nombre)}" loading="lazy"></div>`)));
+    wrap.appendChild(fotos);
+  }
+  const datos = [['Movimiento', PATRONES[x.patron]], ['Músculo principal', x.principal.join(', ')], ['Secundarios', x.secundarios.join(', ') || '—'],
+    ['Equipo', x.equipo], ['Tipo', x.tipo], ['Nivel', x.nivel], ['Carga lumbar', x.lumbar], ['Se mide en', x.medida]];
+  wrap.appendChild(grupo(...datos.map(([k,v])=>el(`<div class="item" style="min-height:44px"><span class="item-texto secondary" style="font-size:14px">${esc(k)}</span><span style="font-size:14px;text-align:right">${esc(v)}</span></div>`))));
+  wrap.appendChild(etiqueta('En mi gimnasio'));
+  wrap.appendChild(grupo(itemFila({titulo:'Hay en mi gimnasio', sub:'Si lo apagás, no aparece como reemplazo sugerido', derecha: interruptor(disponible(x), 'Hay en mi gimnasio', (v)=>{
+    state.noDisponibles = (state.noDisponibles||[]).filter(id=>id!==x.id);
+    if(!v) state.noDisponibles.push(x.id);
+    saveState(); render();
+  })})));
+  if(x.propio){
+    wrap.appendChild(el('<div style="height:12px"></div>'));
+    wrap.appendChild(boton(`${icon('trash')} Borrar ejercicio propio`, 'btn-full', ()=>{
+      if(!confirm(`¿Borrar "${x.nombre}" de tu biblioteca?`)) return;
+      state.bibliotecaPropia = state.bibliotecaPropia.filter(e=>e.id!==x.id);
+      saveState(); rutinaSub = null; render();
+    }));
+  }
+  return wrap;
+}
+function screenNuevoEjercicio(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ rutinaSub = null; render(); }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Agregar ejercicio propio</h2>`));
+  const opts = (lista, sel)=>lista.map(([v,t])=>`<option value="${esc(v)}" ${v===sel?'selected':''}>${esc(t)}</option>`).join('');
+  const form = el(`<div class="pila">
+    <div class="campo"><label for="nuevoNombre">Nombre</label><input id="nuevoNombre" type="text" placeholder="ej. Remo en máquina Hammer"></div>
+    <div class="campo"><label for="nuevoPatron">Tipo de movimiento</label><select id="nuevoPatron">${opts(Object.entries(PATRONES))}</select></div>
+    <div class="campo"><label for="nuevoMusculo">Músculo principal</label><select id="nuevoMusculo">${opts(MUSCULOS.map(m=>[m,m]))}</select></div>
+    <div class="campo"><label for="nuevoEquipo">Equipo</label><select id="nuevoEquipo">${opts(EQUIPOS.map(m=>[m,m]), 'Máquina')}</select></div>
+    <div class="campo"><label for="nuevoMedida">Se mide en</label><select id="nuevoMedida">${opts([['kg+reps','Kg y repeticiones'],['reps','Repeticiones'],['seg','Segundos'],['kg+seg','Kg y segundos'],['kg+m','Kg y metros']])}</select></div>
+    <div class="campo"><label for="nuevoLumbar">Carga en la zona lumbar</label><select id="nuevoLumbar">${opts([['baja','Baja'],['media','Media'],['alta','Alta']])}</select></div>
+  </div>`);
+  wrap.appendChild(form);
+  wrap.appendChild(boton('Guardar ejercicio', 'btn-primary btn-full', ()=>{
+    const nombre = document.getElementById('nuevoNombre').value.trim();
+    if(!nombre){ alert('Poné el nombre del ejercicio.'); return; }
+    if(buscarEjercicio(nombre)){ alert('Ya hay un ejercicio con ese nombre en la biblioteca.'); return; }
+    const x = {id:'propio-'+Date.now(), nombre, alias:[normalizarNombre(nombre)], patron: document.getElementById('nuevoPatron').value,
+      principal:[document.getElementById('nuevoMusculo').value], secundarios:[], equipo: document.getElementById('nuevoEquipo').value,
+      tipo:'Propio', nivel:'—', lumbar: document.getElementById('nuevoLumbar').value, medida: document.getElementById('nuevoMedida').value,
+      mecanica:'', fotos:[], propio:true};
+    state.bibliotecaPropia = [...(state.bibliotecaPropia||[]), x];
+    saveState(); rutinaSub = null; render();
+  }));
+  wrap.lastChild.style.marginTop = '14px';
   return wrap;
 }
 

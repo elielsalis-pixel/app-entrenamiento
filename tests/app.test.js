@@ -174,7 +174,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('rutina: ver formato', await visible('Cada día empieza con'));
   await tocar('text=Volver');
   // turno tarde desde Rutina
-  await tocar('[role="tab"]:has-text("Turno tarde")');
+  await tocar('[role="tab"]:has-text("Tarde")');
   await page.fill('#tardePaste', TARDE);
   await tocar('text=Guardar turno tarde');
   ok('tarde: guarda rutina', await ev(()=>state.routineTarde && state.routineTarde.exercises.length===4 && state.routineTarde.exercises[3].medida==='kg+m'));
@@ -209,6 +209,46 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await tocar('text=Quitar'); await page.waitForTimeout(300);
   ok('sonidos: quitar audio', await ev(()=>media.sounds.length===0));
   await tocar('text=Volver');
+
+  // --- biblioteca
+  ok('biblioteca: 252 ejercicios con datos completos', await ev(()=>BIBLIOTECA.length===252 && BIBLIOTECA.every(x=>x.nombre && x.patron in PATRONES && x.principal.length && ['baja','media','alta'].includes(x.lumbar))));
+  ok('biblioteca: reconoce tus nombres (fondo de máquina asistido, remo en polea, curl femoral)', await ev(()=>
+    buscarEjercicio('Fondo de máquina asistido').nombre==='Fondos en máquina' && buscarEjercicio('remo en polea').patron==='tiron_h' && buscarEjercicio('Curl femoral').patron==='femoral'));
+  ok('biblioteca: fotos de la base en ejercicios sin ilustración', await ev(()=>imagenDe('Remo con barra').startsWith('ejercicios/fdb/')));
+  ok('reemplazos: mismo movimiento, sin más carga lumbar, sin repetir el día', await ev(()=>{
+    const r = sugerenciasReemplazo('Press banca plano con barra', ['Press inclinado con mancuernas']);
+    return r.length>=5 && r.every(x=>x.patron==='empuje_h' && x.lumbar==='baja' && x.nombre!=='Press inclinado con mancuernas');
+  }));
+  ok('reemplazos: una sentadilla con barra sugiere opciones más suaves para la lumbar primero', await ev(()=>{
+    const r = sugerenciasReemplazo('Sentadilla con barra', []);
+    return r.slice(0,3).every(x=>x.lumbar!=='alta');
+  }));
+  await ev(()=>setTab('rutina'));
+  await tocar('[role="tab"]:has-text("Biblioteca")');
+  ok('biblioteca: pantalla con buscador y lista', await page.isVisible('input[aria-label="Buscar en la biblioteca"]') && (await page.$$('#screen .grupo .item')).length>=50);
+  await page.fill('input[aria-label="Buscar en la biblioteca"]', 'press banca con mancuernas');
+  await page.locator('#screen .item:has-text("Press banca con mancuernas")').first().click();
+  ok('biblioteca: ficha del ejercicio', await visible('Músculo principal') && await page.isVisible('.foto-grande img'));
+  await tocar('button[role="switch"][aria-label="Hay en mi gimnasio"]');
+  ok('biblioteca: marcar "no hay en mi gimnasio"', await ev(()=>state.noDisponibles.includes('Dumbbell_Bench_Press')));
+  ok('reemplazos: no sugiere lo que no hay', await ev(()=>!sugerenciasReemplazo('Press banca plano con barra', []).some(x=>x.id==='Dumbbell_Bench_Press')));
+  await tocar('text=Volver');
+  await tocar('text=Agregar ejercicio propio');
+  await page.fill('#nuevoNombre', 'Press en máquina Hammer del gym');
+  await page.selectOption('#nuevoPatron', 'empuje_h'); await page.selectOption('#nuevoMusculo', 'Pecho');
+  await tocar('text=Guardar ejercicio');
+  ok('biblioteca: agregar ejercicio propio', await ev(()=>state.bibliotecaPropia.length===1 && buscarEjercicio('press en maquina hammer del gym').propio));
+  ok('reemplazos: incluye tus ejercicios propios', await ev(()=>sugerenciasReemplazo('Press banca plano con barra', []).some(x=>x.propio)));
+  // cambiar en la sesión con la biblioteca
+  await ev(()=>{ state.lastByExercise['Press de pecho en máquina'] = {peso:70, reps:10}; saveState(); setTab('inicio'); });
+  await tocar('text=Empezar entrenamiento');
+  await tocar('button:has-text("Cambiar")');
+  ok('cambiar: muestra Project, biblioteca y buscador', await visible('Sugeridas por el Project') && await visible('De la biblioteca') && await page.isVisible('input[aria-label="Buscar ejercicio"]'));
+  await page.fill('input[aria-label="Buscar ejercicio"]', 'press de pecho en maquina');
+  await page.locator('.alt-card:has-text("Press de pecho en máquina") >> text=Solo hoy').first().click();
+  ok('cambiar: aplica el nuevo solo hoy', await ev(()=>state.activeSession.exercises[0].nombre==='Press de pecho en máquina' && state.routine.days[0].exercises[0].nombre==='Press banca plano'));
+  ok('cambiar: precarga los pesos del ejercicio nuevo', await ev(()=>state.activeSession.exercises[0].sets.filter(s=>s.tipo==='Normal').every(s=>s.peso===70)));
+  await tocar('text=Finalizar sesión');
 
   // --- volver arriba al cambiar de pestaña
   await ev(()=>window.scrollTo(0, 400));
