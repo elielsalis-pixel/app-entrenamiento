@@ -83,6 +83,17 @@
   .seg{flex:1;height:6px;border-radius:3px;background:var(--border);border:none;padding:0}
   .seg.hecho{background:var(--success)}
   .seg.actual{background:var(--accent)}
+  .segbar{align-items:center}
+  .segcirc{display:flex;gap:2px;padding:2px;border:1px solid var(--accent);border-radius:5px}
+  .banda-circuito{border:1px solid var(--accent);background:var(--accent-bg);border-radius:14px;padding:10px 12px;margin-bottom:12px}
+  .chips-circuito{display:flex;gap:6px;flex-wrap:wrap}
+  .chip-circuito{display:inline-flex;align-items:center;gap:4px;min-height:32px;padding:0 10px;border-radius:16px;border:1px solid var(--border);background:var(--surface);font-size:12px;color:var(--text-2)}
+  .chip-circuito .icon{width:14px;height:14px}
+  .chip-circuito.actual{border-color:var(--accent);color:var(--accent);font-weight:600}
+  .chip-circuito.hecho{color:var(--success)}
+  .bloque-circuito{border:1px solid var(--accent);border-radius:16px;padding:8px;display:flex;flex-direction:column;gap:8px}
+  .bloque-circuito .alt-card{padding:8px}
+  .bloque-circuito .acciones-editor .btn{padding:0 6px;gap:4px}
   .seglabel{flex:1;min-width:0;font-size:10px;line-height:1.25;text-align:center;color:var(--text-muted);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   .miniatura{width:64px;height:64px;border-radius:14px;border:1px solid var(--border);background:var(--surface-2);padding:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text-muted);overflow:hidden}
   .miniatura img{width:100%;height:100%;object-fit:cover}
@@ -140,7 +151,7 @@
   #restbar button{height:44px;min-width:50px;border-radius:12px;border:1px solid rgba(128,128,128,.4);background:transparent;color:var(--bg);font-size:14px;font-weight:600}
   #restbar .saltar{background:var(--bg);color:var(--text);border:none;min-width:64px}
   #restbar .progreso{position:absolute;left:0;bottom:0;height:4px;background:var(--success)}
-  .cierre{position:fixed;left:50%;transform:translateX(-50%);width:calc(100% - 24px);max-width:456px;bottom:calc(150px + env(safe-area-inset-bottom));background:var(--surface);border:2px solid var(--accent);border-radius:16px;padding:14px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+  .cierre{max-height:60vh;overflow:auto;position:fixed;left:50%;transform:translateX(-50%);width:calc(100% - 24px);max-width:456px;bottom:calc(150px + env(safe-area-inset-bottom));background:var(--surface);border:2px solid var(--accent);border-radius:16px;padding:14px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.25)}
   #tabbar{display:flex;border-top:1px solid var(--border);background:var(--surface);position:fixed;left:50%;transform:translateX(-50%);width:100%;max-width:480px;bottom:0;padding-bottom:env(safe-area-inset-bottom);z-index:40}
   #tabbar button{flex:1;border:none;background:transparent;height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--text-muted);font-size:11px}
   #tabbar button[aria-current="page"]{color:var(--accent);font-weight:600}
@@ -424,27 +435,66 @@ function parseLineaEjercicio(line, def){
     if((m = p.match(/medida\s*([a-z+]+)/i)) && MEDIDAS[m[1].toLowerCase()]) e.medida = m[1].toLowerCase();
     if((m = p.match(/alt:\s*(.+)/i))) e.alternativas = m[1].split(',').map(a=>({nombre:a.trim(), detalle:''}));
   });
+  if(!parts.some(p=>/reps\s*\d/i.test(p))) sinRepsSiNoCorresponde(e);
   return e;
 }
+// el rango de reps por defecto no tiene sentido en algo que se mide en segundos o metros
+function sinRepsSiNoCorresponde(e){ if(!camposDe(e.medida).includes('reps')){ e.repsMin = null; e.repsMax = null; } }
 function ejercicioATexto(e){
   if(e.cardio) return `CARDIO: ${e.nombre}`;
-  const partes = [e.nombre, `descanso ${e.descanso}`];
-  if(e.calentamiento!==undefined) partes.push(`calentamiento ${e.calentamiento||0}`, `aproximacion ${e.aproximacion||0}`);
-  partes.push(`series ${e.series}`);
+  const partes = [e.nombre];
+  if(!e.circuito){   // en un circuito las series y el descanso los define el bloque
+    partes.push(`descanso ${e.descanso}`);
+    if(e.calentamiento!==undefined) partes.push(`calentamiento ${e.calentamiento||0}`, `aproximacion ${e.aproximacion||0}`);
+    partes.push(`series ${e.series}`);
+  }
   if(e.medida) partes.push(`medida ${e.medida}`);
   if(e.repsMin) partes.push(`reps ${e.repsMin}-${e.repsMax}`);
   if(e.alternativas && e.alternativas.length) partes.push(`alt: ${e.alternativas.map(a=>a.nombre).join(', ')}`);
   return partes.join(' | ');
 }
+/* ---------- circuitos: CIRCUITO N vueltas | descanso X ... FIN CIRCUITO ---------- */
+// cada vuelta es una serie de cada ejercicio; sin descanso entre ejercicios, descanso al terminar la vuelta
+function lineaCircuito(line, ctx){
+  if(/^FIN\s+CIRCUITO\b/i.test(line)){ ctx.circ = null; return true; }
+  const m = line.match(/^CIRCUITO\b(.*)$/i);
+  if(!m) return false;
+  const v = m[1].match(/(\d+)\s*vueltas?/i), d = m[1].match(/descanso\s*(\d+)/i);
+  ctx.n = (ctx.n || 0) + 1;
+  ctx.circ = {id: 'c' + ctx.n, vueltas: v ? parseInt(v[1], 10) : 3, descanso: d ? parseInt(d[1], 10) : 90};
+  return true;
+}
+function meterEnCircuito(e, circ){
+  e.circuito = {...circ};
+  e.series = circ.vueltas;
+  if('calentamiento' in e){ e.calentamiento = 0; e.aproximacion = 0; }
+  return e;
+}
+// grupos consecutivos: un ejercicio suelto o todos los de un mismo circuito
+function bloquesDe(lista){
+  const out = [];
+  lista.forEach((e, i)=>{
+    const ult = out[out.length-1];
+    if(e.circuito && ult && ult.circuito && ult.circuito.id===e.circuito.id) ult.idx.push(i);
+    else out.push({circuito: e.circuito || null, idx: [i]});
+  });
+  return out;
+}
+function ejerciciosATexto(lista){
+  return bloquesDe(lista).flatMap(b=>{
+    const lineas = b.idx.map(i=>ejercicioATexto(lista[i]));
+    return b.circuito ? [`CIRCUITO ${b.circuito.vueltas} vueltas | descanso ${b.circuito.descanso}`, ...lineas, 'FIN CIRCUITO'] : lineas;
+  });
+}
 function parseRoutine(text){
   const days = [];
-  let current = null;
+  let current = null, ctx = {};
   lineasDe(text).forEach(line=>{
     const dayMatch = line.match(/^DIA\s*\d+\s*:\s*(.+)$/i);
-    if(dayMatch){ current = {name: dayMatch[1].trim(), exercises: []}; days.push(current); return; }
-    if(!current) return;
+    if(dayMatch){ current = {name: dayMatch[1].trim(), exercises: []}; days.push(current); ctx = {}; return; }
+    if(!current || lineaCircuito(line, ctx)) return;
     const e = parseLineaEjercicio(line, DEF_MANANA);
-    if(e) current.exercises.push(e);
+    if(e) current.exercises.push(ctx.circ ? meterEnCircuito(e, ctx.circ) : e);
   });
   return {days};
 }
@@ -530,15 +580,16 @@ function fmtSet(s, medida){
 
 function parseTarde(text){
   let name = null;
+  const ctx = {};
   const exercises = [];
   lineasDe(text).forEach(line=>{
     const head = line.match(/^TARDE\s*\d*\s*:\s*(.*)$/i);
     if(head){ name = head[1].trim() || 'Turno tarde'; return; }
-    if(name===null) return;
+    if(name===null || lineaCircuito(line, ctx)) return;
     const cm = line.match(/^CARDIO\s*:\s*(.+)$/i);
     if(cm){ exercises.push({nombre: cm[1].split('|')[0].trim(), cardio:true}); return; }
     const e = parseLineaEjercicio(line, DEF_TARDE);
-    if(e) exercises.push(e);
+    if(e) exercises.push(ctx.circ ? meterEnCircuito(e, ctx.circ) : e);
   });
   if(name===null || !exercises.length) return null;
   return {name, exercises};
@@ -554,7 +605,7 @@ function cargarTarde(){
       saveState(); render();
     }});
 }
-function tardeToText(t){ return [`TARDE: ${t.name}`, ...t.exercises.map(ejercicioATexto)].join('\n') + '\n'; }
+function tardeToText(t){ return [`TARDE: ${t.name}`, ...ejerciciosATexto(t.exercises)].join('\n') + '\n'; }
 
 const TARDE_KEY = 'Turno tarde';
 function nuevoCardio(e){
@@ -576,7 +627,7 @@ function fmtCardio(c){
   return partes.join(' · ');
 }
 
-function diaToText(day, idx){ return [`DIA ${idx+1}: ${day.name}`, ...day.exercises.map(ejercicioATexto)].join('\n') + '\n'; }
+function diaToText(day, idx){ return [`DIA ${idx+1}: ${day.name}`, ...ejerciciosATexto(day.exercises)].join('\n') + '\n'; }
 
 /* ---------- pantalla: rutina (ver actual / cargar nueva) ---------- */
 
@@ -597,8 +648,10 @@ let sustEjIdx = null;
 
 function ejercicioDeSesion(e, clave, usarGeneral){
   if(e.cardio) return {nombre:e.nombre, cardio:true, cardioData:nuevoCardio(e), cardioHecho:false, sets:[], alternativas:[]};
-  return {nombre:e.nombre, medida:e.medida, descanso:(state.customDescanso||{})[e.nombre] || e.descanso,
+  const ej = {nombre:e.nombre, medida:e.medida, descanso:(state.customDescanso||{})[e.nombre] || e.descanso,
           alternativas:e.alternativas, repsMin:e.repsMin, repsMax:e.repsMax, sets:seedSets(e, clave, usarGeneral)};
+  if(e.circuito) ej.circuito = {...e.circuito};
+  return ej;
 }
 function iniciarSesion(datos, ejercicios, clave, usarGeneral){
   if(state.activeSession){ alert('Tenés una sesión en curso. Finalizala antes de empezar otra.'); setTab('sesion'); return; }
@@ -888,6 +941,7 @@ function finalizarSesion(){
     // la mañana guarda la medida solo si no es kg+reps (lo implícito)
     const registro = {nombre:e.nombre, sets:hechas};
     if(tarde || e.medida) registro.medida = e.medida;
+    if(e.circuito) registro.circuito = e.circuito.vueltas;
     exercises.push(registro);
   });
 
@@ -966,6 +1020,7 @@ function renderChartEjercicio(nombre){
   return wrap;
 }
 
+function enCircuitoTexto(e){ return e.circuito ? ` (circuito, ${e.circuito} vueltas)` : ''; }
 function enPeriodo(lista, desde){ return (lista||[]).filter(x=>new Date(x.fecha).getTime() >= (desde||0)); }
 function generarInforme(desde){
   let out = `INFORME DE ENTRENAMIENTO\n`;
@@ -978,7 +1033,7 @@ function generarInforme(desde){
       const hechos = setsHechos(e);
       if(!hechos.length) return;
       const setsStr = hechos.map(s=>`${fmtSet(s, e.medida)}${s.rpe?` RPE${s.rpe}`:''} (${s.tipo})`).join(', ');
-      out += `  ${e.nombre}: ${setsStr}\n`;
+      out += `  ${e.nombre}${enCircuitoTexto(e)}: ${setsStr}\n`;
       usados.add(e.nombre);
     });
     out += `  Volumen total: ${Math.round(volumenDe(h))} kg | Duración: ${Math.round(h.duracionSeg/60)} min\n`;
@@ -993,7 +1048,7 @@ function generarInforme(desde){
       h.exercises.forEach(e=>{
         if(e.cardio){ out += `  Cardio: ${fmtCardio(e.cardioData)}\n`; return; }
         const setsStr = e.sets.map(s=>`${fmtSet(s, e.medida)}${s.rpe?` RPE${s.rpe}`:''}`).join(', ');
-        out += `  ${e.nombre} (${e.medida}): ${setsStr}\n`;
+        out += `  ${e.nombre} (${e.medida})${enCircuitoTexto(e)}: ${setsStr}\n`;
         usados.add(e.nombre);
       });
       out += `  Duración: ${Math.round(h.duracionSeg/60)} min\n`;
@@ -1398,11 +1453,24 @@ function saltarDia(){
 /* ---------- pantalla: rutina ---------- */
 function detalleEjercicio(e){
   if(e.cardio) return 'cardio';
-  const partes = [`${(e.calentamiento||0)+(e.aproximacion||0)+(e.series||0)} series`];
+  const partes = e.circuito ? [] : [`${(e.calentamiento||0)+(e.aproximacion||0)+(e.series||0)} series`];
   if(e.repsMin) partes.push(`${e.repsMin}-${e.repsMax} reps`);
-  if(e.medida && e.medida!=='kg+reps') partes.push(e.medida);
-  partes.push(`desc ${fmtDescanso(e.descanso)}`);
-  return partes.join(' · ');
+  // la medida se aclara solo si no es la obvia (kg+reps, o reps cuando ya hay rango)
+  if(e.medida && e.medida!=='kg+reps' && !(e.medida==='reps' && e.repsMin)) partes.push(e.medida);
+  if(!e.circuito) partes.push(`desc ${fmtDescanso(e.descanso)}`);
+  return partes.join(' · ') || 'en circuito';
+}
+function textoCircuito(c){ return `Circuito · ${c.vueltas} vueltas · desc ${fmtDescanso(c.descanso)}`; }
+function listaEjerciciosRutina(lista){
+  const ul = el(`<div style="margin-top:8px"></div>`);
+  const linea = e=>el(`<p class="secondary" style="font-size:14px;padding:3px 0">${esc(e.nombre)} · ${esc(detalleEjercicio(e))}</p>`);
+  bloquesDe(lista).forEach(b=>{
+    if(!b.circuito){ ul.appendChild(linea(lista[b.idx[0]])); return; }
+    const caja = el(`<div style="border-left:3px solid var(--accent);padding-left:10px;margin:4px 0"><p style="font-size:12px;font-weight:600;color:var(--accent)">${esc(textoCircuito(b.circuito))}</p></div>`);
+    b.idx.forEach(i=>caja.appendChild(linea(lista[i])));
+    ul.appendChild(caja);
+  });
+  return ul;
 }
 function screenRutina(){
   if(editor) return screenEditor();
@@ -1419,9 +1487,7 @@ function screenRutina(){
     const t = state.routineTarde;
     const card = el(`<div class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2>${esc(t.name)}</h2></div></div>`);
     card.firstChild.appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', ()=>abrirEditor('tarde', 0)));
-    const ul = el(`<div style="margin-top:8px"></div>`);
-    t.exercises.forEach(e=>ul.appendChild(el(`<p class="secondary" style="font-size:14px;padding:3px 0">${esc(e.nombre)} · ${esc(detalleEjercicio(e))}</p>`)));
-    card.appendChild(ul);
+    card.appendChild(listaEjerciciosRutina(t.exercises));
     wrap.appendChild(card);
     wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-top:10px">No entra en la rotación de días; en el informe sale en su propia sección.</p>`));
     return wrap;
@@ -1435,9 +1501,7 @@ function screenRutina(){
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px"><h2>${esc(d.name)}</h2></div>
     </div>`);
     card.children[1].appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', ()=>abrirEditor('dia', i)));
-    const ul = el(`<div style="margin-top:8px"></div>`);
-    d.exercises.forEach(e=>ul.appendChild(el(`<p class="secondary" style="font-size:14px;padding:3px 0">${esc(e.nombre)} · ${esc(detalleEjercicio(e))}</p>`)));
-    card.appendChild(ul);
+    card.appendChild(listaEjerciciosRutina(d.exercises));
     lista.appendChild(card);
   });
   wrap.appendChild(lista);
@@ -1619,6 +1683,7 @@ function screenSesion(){
   const ej = ses.exercises[ses.focusIdx];
   const wrap = document.createElement('div');
   wrap.appendChild(sesionEncabezado(ses));
+  if(ej.circuito) wrap.appendChild(bandaCircuito(ej));
   wrap.appendChild(sesionEjercicio(ej));
   wrap.appendChild(ej.cardio ? renderCardioCard(ej) : sesionSeries(ej));
   wrap.appendChild(sesionNavegacion(ses));
@@ -1632,12 +1697,21 @@ function sesionEncabezado(ses){
   wrap.appendChild(top);
   const barra = el(`<div class="segbar"></div>`);
   const nombres = el(`<div style="display:flex;gap:4px;margin-bottom:14px"></div>`);
-  ses.exercises.forEach((e,i)=>{
-    const clase = exDone(e) ? 'hecho' : (i===ses.focusIdx ? 'actual' : '');
-    const b = el(`<button class="seg ${clase}" aria-label="Ir a ${esc(e.nombre)}"></button>`);
-    b.onclick = ()=>{ ses.focusIdx = i; saveState(); render(); };
-    barra.appendChild(b);
-    nombres.appendChild(el(`<div class="seglabel" style="${i===ses.focusIdx?'color:var(--accent);font-weight:600':''}">${esc(e.nombre)}</div>`));
+  const resaltar = 'color:var(--accent);font-weight:600';
+  // los ejercicios de un circuito van juntos, con un solo nombre abajo
+  bloquesDe(ses.exercises).forEach(bl=>{
+    const destino = bl.circuito ? el(`<div class="segcirc" style="flex:${bl.idx.length}"></div>`) : barra;
+    bl.idx.forEach(i=>{
+      const e = ses.exercises[i];
+      const clase = exDone(e) ? 'hecho' : (i===ses.focusIdx ? 'actual' : '');
+      const b = el(`<button class="seg ${clase}" aria-label="Ir a ${esc(e.nombre)}"></button>`);
+      b.onclick = ()=>{ ses.focusIdx = i; saveState(); render(); };
+      destino.appendChild(b);
+    });
+    if(bl.circuito) barra.appendChild(destino);
+    const actual = bl.idx.includes(ses.focusIdx);
+    const texto = bl.circuito ? `Circuito (${bl.idx.length})` : ses.exercises[bl.idx[0]].nombre;
+    nombres.appendChild(el(`<div class="seglabel" style="flex:${bl.idx.length};${actual ? resaltar : ''}">${esc(texto)}</div>`));
   });
   wrap.appendChild(barra);
   wrap.appendChild(nombres);
@@ -1651,8 +1725,9 @@ function sesionEjercicio(ej){
   if(!ej.cardio) mini.onclick = ()=>{ setSessionView('foto'); render(); };
   cab.appendChild(mini);
   const nSeries = ej.sets.length;
-  const meta = ej.cardio ? 'Solo la duración es obligatoria'
-    : `${nSeries} series${ej.repsMin?` · ${ej.repsMin}–${ej.repsMax} reps`:''} · descanso ${fmtDescanso(ej.descanso)}`;
+  let meta = `${nSeries} series${ej.repsMin?` · ${ej.repsMin}–${ej.repsMax} reps`:''} · descanso ${fmtDescanso(ej.descanso)}`;
+  if(ej.cardio) meta = 'Solo la duración es obligatoria';
+  else if(ej.circuito) meta = `${ej.repsMin ? `${ej.repsMin}–${ej.repsMax} reps · ` : ''}sin descanso, sigue el próximo`;
   cab.appendChild(el(`<div style="flex:1;min-width:0"><h1 style="font-size:20px;line-height:1.2">${esc(ej.cardio ? 'Cardio · '+ej.nombre : ej.nombre)}</h1><p class="secondary" style="font-size:13px;margin-top:4px">${esc(meta)}</p></div>`));
   wrap.appendChild(cab);
   const acciones = el(`<div class="acciones" style="margin-bottom:10px"></div>`);
@@ -1676,12 +1751,47 @@ function serieActivaIdx(ej){
 }
 function marcarHecha(ej, si){
   const s = ej.sets[si];
+  const vueltaAntes = ej.circuito ? vueltaDe(miembrosCircuito(ej)) : null;
   s.done = true; s.deleteMode = false;
   registrarSetDone(ej, s);
-  iniciarTimer(ej);
   ej.activa = null;
+  if(ej.circuito){ avanzarCircuito(ej, vueltaAntes); return; }
+  iniciarTimer(ej);
   saveState(); render();
   if(exDone(ej)) mostrarCierreEjercicio(ej);
+}
+function miembrosCircuito(ej){ return state.activeSession.exercises.filter(e=>e.circuito && e.circuito.id===ej.circuito.id); }
+function hechasDe(e){ return e.sets.filter(s=>s.done).length; }
+// vuelta en curso (0 = primera): la menor cantidad de series hechas entre los que faltan; null si terminó
+function vueltaDe(miembros){
+  const pendientes = miembros.filter(e=>!exDone(e));
+  return pendientes.length ? Math.min(...pendientes.map(hechasDe)) : null;
+}
+// sin descanso entre ejercicios: pasa al siguiente de la vuelta; al cerrar la vuelta, descanso y vuelve al primero
+function avanzarCircuito(ej, vueltaAntes){
+  const ses = state.activeSession;
+  const miembros = miembrosCircuito(ej);
+  const vuelta = vueltaDe(miembros);
+  if(vuelta===null){ saveState(); render(); mostrarCierre(miembros); return; }
+  const idx = ses.exercises.indexOf(ej);
+  const enEstaVuelta = miembros.filter(e=>!exDone(e) && hechasDe(e)===vuelta);
+  const sig = vuelta > vueltaAntes ? enEstaVuelta[0] : (enEstaVuelta.find(e=>ses.exercises.indexOf(e) > idx) || enEstaVuelta[0]);
+  ses.focusIdx = ses.exercises.indexOf(sig);
+  if(vuelta > vueltaAntes) iniciarTimer({nombre: sig.nombre, descanso: ej.circuito.descanso});
+  saveState(); render();
+}
+function bandaCircuito(ej){
+  const miembros = miembrosCircuito(ej);
+  const vuelta = vueltaDe(miembros);
+  const total = Math.max(...miembros.map(e=>e.sets.length));
+  const banda = el(`<div class="banda-circuito"><p style="font-size:13px;margin-bottom:8px"><b>Circuito</b> · ${vuelta===null ? 'completo' : `Vuelta ${vuelta+1} de ${total}`} · descanso ${fmtDescanso(ej.circuito.descanso)} al terminar cada vuelta</p><div class="chips-circuito"></div></div>`);
+  miembros.forEach(m=>{
+    const listo = exDone(m) || (vuelta!==null && hechasDe(m) > vuelta);
+    const b = el(`<button class="chip-circuito ${m===ej ? 'actual' : ''} ${listo ? 'hecho' : ''}">${listo ? icon('check') : ''}${esc(m.nombre)}</button>`);
+    b.onclick = ()=>{ state.activeSession.focusIdx = state.activeSession.exercises.indexOf(m); saveState(); render(); };
+    banda.lastChild.appendChild(b);
+  });
+  return banda;
 }
 function sesionSeries(ej){
   const wrap = document.createDocumentFragment();
@@ -2589,7 +2699,8 @@ function normalizarReps(e){
 function formDatos(e, tarde){
   const form = el(`<div class="fila2"></div>`);
   const inputs = {};
-  CAMPOS_EDITOR.forEach(([k, label])=>{
+  const campos = e.circuito ? CAMPOS_EDITOR.filter(([k])=>k==='repsMin' || k==='repsMax') : CAMPOS_EDITOR;
+  campos.forEach(([k, label])=>{
     const c = el(`<div class="campo"><label>${label}</label><input type="number" inputmode="numeric" min="0" aria-label="${label}" value="${e[k]==null ? '' : e[k]}"></div>`);
     const inp = inputs[k] = c.querySelector('input');
     inp.onchange = ()=>{
@@ -2626,14 +2737,63 @@ function cambiarEnEditor(rut, e, tarde){
     onElegir: x=>{ if(e.cardio) e.nombre = x.nombre; else renombrarEjercicio(e, x, tarde); guardarEditor(); },
     volver: cerrarModal}));
 }
-function agregarAlEditor(x, cardio){
+// circuito: {id, vueltas, descanso} para sumarlo a uno existente o crear uno nuevo
+function agregarAlEditor(x, cardio, circuito){
   const rut = rutinaEditada();
   const tarde = editor.tipo==='tarde';
   const e = cardio ? {nombre: x.nombre, cardio: true} : {nombre: x.nombre, ...DEF_MANANA, alternativas: []};
-  if(!cardio) ponerMedida(e, medidaPara(x, tarde, tarde ? DEF_TARDE.medida : undefined));
-  rut.exercises.push(e);
-  editor.abierto = cardio ? null : rut.exercises.length - 1;
+  if(!cardio){ ponerMedida(e, medidaPara(x, tarde, tarde ? DEF_TARDE.medida : undefined)); sinRepsSiNoCorresponde(e); }
+  let pos = rut.exercises.length;
+  if(circuito){
+    meterEnCircuito(e, circuito);
+    const ultimo = rut.exercises.map(y=>y.circuito && y.circuito.id).lastIndexOf(circuito.id);
+    if(ultimo >= 0) pos = ultimo + 1;
+  }
+  rut.exercises.splice(pos, 0, e);
+  editor.abierto = cardio ? null : pos;
   guardarEditor();
+}
+function elegirParaCircuito(titulo, circuito){
+  const rut = rutinaEditada();
+  abrirModal('elegir', ()=>screenElegir({titulo, subtitulo: rut.name, onElegir: x=>agregarAlEditor(x, false, circuito), volver: cerrarModal}));
+}
+// mueve un bloque entero (ejercicio suelto o circuito) por encima o por debajo del vecino
+function moverBloque(lista, i, dir){
+  const bs = bloquesDe(lista);
+  const k = bs.findIndex(b=>b.idx.includes(i));
+  if(!bs[k+dir]) return;
+  [bs[k], bs[k+dir]] = [bs[k+dir], bs[k]];
+  lista.splice(0, lista.length, ...bs.flatMap(b=>b.idx.map(x=>lista[x])));
+}
+function mismoCircuito(a, b){ return !!(a && b && a.circuito && b.circuito && a.circuito.id===b.circuito.id); }
+function cambiarCircuito(rut, id, campo, valor){
+  rut.exercises.filter(e=>e.circuito && e.circuito.id===id).forEach(e=>{
+    e.circuito[campo] = valor;
+    if(campo==='vueltas') e.series = valor;
+  });
+  saveState();
+}
+function cabeceraCircuito(rut, b){
+  const c = b.circuito;
+  const cab = el(`<div><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px"><p style="font-weight:600;color:var(--accent)">Circuito</p><div class="acciones-editor" style="flex:0 0 auto"></div></div>
+    <div class="fila2"><div class="campo"><label>Vueltas</label><input type="number" inputmode="numeric" min="1" aria-label="Vueltas" value="${c.vueltas}"></div>
+    <div class="campo"><label>Descanso por vuelta (seg)</label><input type="number" inputmode="numeric" min="0" aria-label="Descanso por vuelta" value="${c.descanso}"></div></div></div>`);
+  const [vueltas, descanso] = cab.querySelectorAll('input');
+  vueltas.onchange = ()=>{ const v = Math.max(1, parseInt(vueltas.value, 10) || 1); vueltas.value = v; cambiarCircuito(rut, c.id, 'vueltas', v); };
+  descanso.onchange = ()=>{ const v = Math.max(0, parseInt(descanso.value, 10) || 0); descanso.value = v; cambiarCircuito(rut, c.id, 'descanso', v); };
+  const acciones = cab.querySelector('.acciones-editor');
+  const bs = bloquesDe(rut.exercises);
+  const k = bs.findIndex(x=>x.idx[0]===b.idx[0]);
+  acciones.appendChild(botonIcono('arrowup', 'Subir circuito', ()=>{ moverBloque(rut.exercises, b.idx[0], -1); guardarEditor(); }, k===0));
+  acciones.appendChild(botonIcono('arrowdown', 'Bajar circuito', ()=>{ moverBloque(rut.exercises, b.idx[0], 1); guardarEditor(); }, k===bs.length-1));
+  acciones.appendChild(botonIcono('trash', 'Quitar circuito', ()=>{
+    if(b.idx.length===rut.exercises.length){ alert('Tiene que quedar al menos un ejercicio.'); return; }
+    if(!confirm(`¿Quitar el circuito con sus ${b.idx.length} ejercicios?`)) return;
+    rut.exercises.splice(b.idx[0], b.idx.length);
+    editor.abierto = null;
+    guardarEditor();
+  }));
+  return cab;
 }
 function tarjetaEditor(rut, e, i, tarde){
   const x = buscarEjercicio(e.nombre);
@@ -2645,9 +2805,15 @@ function tarjetaEditor(rut, e, i, tarde){
     titulo: e.nombre, sub: (e.cardio ? 'Cardio' : detalleEjercicio(e)) + aviso});
   fila.style.cssText = 'padding:0;border:none;min-height:0';
   card.appendChild(fila);
+  // dentro de un circuito se mueve entre sus ejercicios; afuera, salta bloques enteros
+  const lista = rut.exercises;
+  const bs = bloquesDe(lista);
+  const k = bs.findIndex(b=>b.idx.includes(i));
+  const puedeSubir = e.circuito ? mismoCircuito(lista[i-1], e) : k > 0;
+  const puedeBajar = e.circuito ? mismoCircuito(lista[i+1], e) : k < bs.length-1;
   const mover = (d)=>{
-    const lista = rut.exercises;
-    [lista[i], lista[i+d]] = [lista[i+d], lista[i]];
+    if(e.circuito) [lista[i], lista[i+d]] = [lista[i+d], lista[i]];
+    else moverBloque(lista, i, d);
     editor.abierto = null;
     guardarEditor();
   };
@@ -2661,8 +2827,8 @@ function tarjetaEditor(rut, e, i, tarde){
   const acciones = el(`<div class="acciones-editor"></div>`);
   if(!e.cardio) acciones.appendChild(boton(`${icon('edit')} Datos`, 'btn-sm', ()=>{ editor.abierto = editor.abierto===i ? null : i; render(); }));
   acciones.appendChild(boton(`${icon('swap')} Cambiar`, 'btn-sm', ()=>cambiarEnEditor(rut, e, tarde)));
-  acciones.appendChild(botonIcono('arrowup', 'Subir', ()=>mover(-1), i===0));
-  acciones.appendChild(botonIcono('arrowdown', 'Bajar', ()=>mover(1), i===rut.exercises.length-1));
+  acciones.appendChild(botonIcono('arrowup', 'Subir', ()=>mover(-1), !puedeSubir));
+  acciones.appendChild(botonIcono('arrowdown', 'Bajar', ()=>mover(1), !puedeBajar));
   acciones.appendChild(botonIcono('trash', 'Quitar', quitar));
   card.appendChild(acciones);
   if(editor.abierto===i) card.appendChild(formDatos(e, tarde));
@@ -2684,14 +2850,23 @@ function screenEditor(){
   };
   wrap.appendChild(nombre);
   const lista = el(`<div class="pila" style="gap:8px"></div>`);
-  rut.exercises.forEach((e, i)=>lista.appendChild(tarjetaEditor(rut, e, i, tarde)));
+  bloquesDe(rut.exercises).forEach(b=>{
+    if(!b.circuito){ lista.appendChild(tarjetaEditor(rut, rut.exercises[b.idx[0]], b.idx[0], tarde)); return; }
+    const caja = el(`<div class="bloque-circuito"></div>`);
+    caja.appendChild(cabeceraCircuito(rut, b));
+    b.idx.forEach(i=>caja.appendChild(tarjetaEditor(rut, rut.exercises[i], i, tarde)));
+    caja.appendChild(boton(`${icon('plus')} Agregar al circuito`, 'btn-dashed btn-full btn-sm', ()=>elegirParaCircuito('Agregar al circuito', b.circuito)));
+    lista.appendChild(caja);
+  });
   wrap.appendChild(lista);
-  const agregar = el(`<div class="${tarde ? 'fila2' : ''}" style="margin-top:12px"></div>`);
+  const agregar = el(`<div class="fila2" style="margin-top:12px"></div>`);
   agregar.appendChild(boton(`${icon('plus')} Agregar ejercicio`, 'btn-dashed btn-full', ()=>abrirModal('elegir', ()=>screenElegir({
     titulo: 'Agregar ejercicio', subtitulo: rut.name, onElegir: x=>agregarAlEditor(x, false), volver: cerrarModal}))));
-  if(tarde) agregar.appendChild(boton(`${icon('run')} Agregar cardio`, 'btn-dashed btn-full', ()=>abrirModal('elegir', ()=>screenElegir({
-    titulo: 'Agregar cardio', subtitulo: rut.name, patron: 'cardio', onElegir: x=>agregarAlEditor(x, true), volver: cerrarModal}))));
+  agregar.appendChild(boton(`${icon('reset')} Agregar circuito`, 'btn-dashed btn-full', ()=>elegirParaCircuito('Primer ejercicio del circuito', {id: 'c' + Date.now(), vueltas: 3, descanso: 90})));
   wrap.appendChild(agregar);
+  if(tarde) wrap.appendChild(boton(`${icon('run')} Agregar cardio`, 'btn-dashed btn-full', ()=>abrirModal('elegir', ()=>screenElegir({
+    titulo: 'Agregar cardio', subtitulo: rut.name, patron: 'cardio', onElegir: x=>agregarAlEditor(x, true), volver: cerrarModal}))));
+  if(tarde) wrap.lastChild.style.marginTop = '10px';
   wrap.appendChild(boton(`${icon('edit')} Editar como texto`, 'btn-ghost btn-full', ()=>{ editor.texto = true; render(); }));
   return wrap;
 }
@@ -2763,16 +2938,20 @@ function siguientePendiente(ses, desde){
 }
 let cierreIntervalo = null;
 function cerrarCierre(){ clearInterval(cierreIntervalo); const c = document.getElementById('cierre'); if(c) c.remove(); }
-function mostrarCierreEjercicio(ej){
+function mostrarCierreEjercicio(ej){ mostrarCierre([ej]); }
+// un ejercicio o todo un circuito: recomendación de cada uno y paso automático al siguiente
+function mostrarCierre(ejs){
   const ses = state.activeSession;
   cerrarCierre();
   const todo = ses.exercises.every(exDone);
-  const sig = todo ? -1 : siguientePendiente(ses, ses.exercises.indexOf(ej));
-  const rec = recomendacion(ej);
+  const sig = todo ? -1 : siguientePendiente(ses, ses.exercises.indexOf(ejs[ejs.length-1]));
   const colores = {subir:'var(--success)', bajar:'var(--warn)', mantener:'var(--text-2)', info:'var(--text-2)'};
+  const recs = ejs.map(e=>({e, rec: recomendacion(e)})).filter(o=>o.rec);
+  const varios = ejs.length > 1;
+  const titulo = varios ? 'Circuito: listo' : `${esc(ejs[0].nombre)}: listo`;
   const caja = el(`<div id="cierre" class="cierre" role="dialog" aria-live="polite" aria-label="${todo?'Sesión completa':'Ejercicio completo'}">
-    <p style="font-weight:700;font-size:17px;margin-bottom:6px">${todo ? 'Sesión completa' : `${esc(ej.nombre)}: listo`}</p>
-    ${rec ? `<p style="font-size:14px;color:${colores[rec.tipo]};margin-bottom:10px">${esc(rec.texto)}</p>` : ''}
+    <p style="font-weight:700;font-size:17px;margin-bottom:6px">${todo ? 'Sesión completa' : titulo}</p>
+    ${recs.map(({e, rec})=>`<p style="font-size:14px;color:${colores[rec.tipo]};margin-bottom:8px">${varios ? `<b>${esc(e.nombre)}:</b> ` : ''}${esc(rec.texto)}</p>`).join('')}
     <p class="secondary cuenta" style="font-size:13px;margin-bottom:12px"></p>
     <div class="fila2"></div>
   </div>`);
