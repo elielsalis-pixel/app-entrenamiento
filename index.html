@@ -84,6 +84,11 @@
   .seg.hecho{background:var(--success)}
   .seg.actual{background:var(--accent)}
   .segbar{align-items:center}
+  .plan-bloques{display:flex;gap:4px;margin-top:10px}
+  .plan-bloque{min-width:60px;border-radius:8px;padding:6px 8px;background:var(--surface-2);display:flex;flex-direction:column;font-size:12px;color:var(--text-2);overflow:hidden}
+  .plan-bloque span:first-child{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .plan-bloque.hecho{opacity:.55}
+  .plan-bloque.actual{background:var(--accent-bg);color:var(--accent);outline:1px solid var(--accent)}
   .segcirc{display:flex;gap:2px;padding:2px;border:1px solid var(--accent);border-radius:5px}
   .banda-circuito{border:1px solid var(--accent);background:var(--accent-bg);border-radius:14px;padding:10px 12px;margin-bottom:12px}
   .chips-circuito{display:flex;gap:6px;flex-wrap:wrap}
@@ -337,6 +342,12 @@ function migrarSetsPorDia(){
   saveState();
 }
 migrarSetsPorDia();
+// el aviso fijo cada 4 semanas pasó a state.aviso (por bloque del plan)
+if('showWeekBanner' in state){
+  if(state.showWeekBanner) state.aviso = {tipo:'semana', semana: state.showWeekBanner};
+  delete state.showWeekBanner;
+  saveState();
+}
 
 function registrarCambioPeso(nombreEjercicio, pesoNuevo, repsNuevo, origen){
   state.logCambios = state.logCambios || [];
@@ -352,7 +363,51 @@ function registrarCambioPeso(nombreEjercicio, pesoNuevo, repsNuevo, origen){
 
 /* ---------- utilidades ---------- */
 function diasPorSemana(){ return (state.routine && state.routine.days.length) || 5; }
-function weekNumber(){ return Math.min(12, Math.floor(state.slot/diasPorSemana())+1); }
+// semana contada aparte de la rotación de días: si cambia la cantidad de días, no se desordena
+function semanaActual(){ return state.semana || Math.floor(state.slot/diasPorSemana()) + 1; }
+
+/* ---------- periodización: PLAN: Hipertrofia 4 | Fuerza 3 | Descarga 1 ---------- */
+function parsePlan(texto){
+  const bloques = String(texto).split('|').map(p=>p.trim().match(/^(.+?)\s+(\d+)\s*(?:semanas?)?$/i))
+    .filter(m=>m && parseInt(m[2], 10) > 0)
+    .map(m=>({nombre: m[1].trim(), semanas: parseInt(m[2], 10)}));
+  return bloques.length ? bloques : null;
+}
+function planATexto(plan){ return `PLAN: ${plan.bloques.map(b=>`${b.nombre} ${b.semanas}`).join(' | ')}`; }
+function semanasDelPlan(plan){ return plan.bloques.reduce((a,b)=>a + b.semanas, 0); }
+// bloque de una semana del plan: {bloque, i, semanaEnBloque}; null si el plan ya terminó
+function bloqueDe(semana){
+  if(!state.plan) return null;
+  let desde = 0;
+  for(let i=0; i<state.plan.bloques.length; i++){
+    const b = state.plan.bloques[i];
+    if(semana <= desde + b.semanas) return {bloque: b, i, semanaEnBloque: semana - desde};
+    desde += b.semanas;
+  }
+  return null;
+}
+function textoSemanaCorto(){
+  const s = semanaActual();
+  return state.plan && bloqueDe(s) ? `Semana ${s} de ${semanasDelPlan(state.plan)}` : `Semana ${s}`;
+}
+function textoBloque(){
+  if(!state.plan) return '';
+  const actual = bloqueDe(semanaActual());
+  return actual ? `${actual.bloque.nombre} (${actual.semanaEnBloque} de ${actual.bloque.semanas})` : 'plan terminado';
+}
+function textoSemana(){ return [textoSemanaCorto(), textoBloque()].filter(Boolean).join(' · '); }
+function textoAviso(a){
+  if(a.tipo==='bloque') return `Terminaste el bloque ${a.nombre}: exportá el informe y pedile al Project cómo seguir.`;
+  if(a.tipo==='plan') return 'Terminaste el plan: exportá el informe y pedile al Project cómo seguir.';
+  return `Completaste la semana ${a.semana}: exportá tu informe para el Project.`;
+}
+// sin plan, aviso cada 4 semanas; con plan, al terminar cada bloque
+function avisoAlTerminarSemana(semana){
+  if(!state.plan) return semana % 4 === 0 ? {tipo:'semana', semana} : null;
+  const b = bloqueDe(semana);
+  if(!b || b.semanaEnBloque < b.bloque.semanas) return null;
+  return b.i === state.plan.bloques.length-1 ? {tipo:'plan'} : {tipo:'bloque', nombre: b.bloque.nombre};
+}
 function todayDayIndex(){ return state.slot % diasPorSemana(); }
 function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function copiarTexto(texto, msgEl, okTxt){
@@ -489,14 +544,17 @@ function ejerciciosATexto(lista){
 function parseRoutine(text){
   const days = [];
   let current = null, ctx = {};
+  let plan = null;
   lineasDe(text).forEach(line=>{
+    const planMatch = line.match(/^PLAN\s*:\s*(.+)$/i);
+    if(planMatch){ plan = parsePlan(planMatch[1]); return; }
     const dayMatch = line.match(/^DIA\s*\d+\s*:\s*(.+)$/i);
     if(dayMatch){ current = {name: dayMatch[1].trim(), exercises: []}; days.push(current); ctx = {}; return; }
     if(!current || lineaCircuito(line, ctx)) return;
     const e = parseLineaEjercicio(line, DEF_MANANA);
     if(e) current.exercises.push(ctx.circ ? meterEnCircuito(e, ctx.circ) : e);
   });
-  return {days};
+  return plan ? {days, plan} : {days};
 }
 
 /* ---------- navegacion ---------- */
@@ -543,9 +601,11 @@ function cargarRutina(){
   revisarYGuardar({titulo: 'Revisar rutina', grupos: parsed.days.map(d=>({nombre: d.name, ejercicios: d.exercises})), tarde: false,
     texto: {id: 'routinepaste', valor: txt}, guardar: ()=>{
       const reemplazando = !!state.routine;
-      state.routine = parsed;
+      // un PLAN nuevo arranca desde la semana 1; sin PLAN, se sigue en el plan y la semana actuales
+      if(parsed.plan){ state.plan = {bloques: parsed.plan}; state.semana = 1; state.aviso = null; }
+      state.routine = {days: parsed.days};
       rutinaSub = null;
-      if(reemplazando && confirm('¿Arrancar la rutina nueva desde la Semana 1, Día 1?')){ state.slot = 0; state.showWeekBanner = null; }
+      if(reemplazando && (parsed.plan || confirm('¿Arrancar la rutina nueva desde el Día 1?'))){ state.slot = 0; state.aviso = null; }
       saveState();
       if(reemplazando){ currentTab='inicio'; state.currentTab='inicio'; }
       render();
@@ -946,6 +1006,8 @@ function finalizarSesion(){
   });
 
   const record = {fecha: new Date().toISOString(), exercises, duracionSeg, volumenTotal, prCount, comparacion: null};
+  const enBloque = bloqueDe(semanaActual());
+  if(enBloque) record.bloque = enBloque.bloque.nombre;
   if(tarde){
     record.turno = 'tarde';
     record.dayName = 'Turno tarde: ' + ses.rutinaNombre;
@@ -967,10 +1029,12 @@ function finalizarSesion(){
 }
 
 function avanzarSlot(){
+  const semana = semanaActual();
   state.slot++;
-  const n = diasPorSemana();
-  const semanaTerminada = state.slot % n === 0 ? state.slot / n : null;
-  state.showWeekBanner = (semanaTerminada && semanaTerminada % 4 === 0) ? semanaTerminada : null;
+  state.aviso = null;
+  if(state.slot % diasPorSemana() !== 0) return;
+  state.semana = semana + 1;
+  state.aviso = avisoAlTerminarSemana(semana);
 }
 
 
@@ -1025,10 +1089,11 @@ function enPeriodo(lista, desde){ return (lista||[]).filter(x=>new Date(x.fecha)
 function generarInforme(desde){
   let out = `INFORME DE ENTRENAMIENTO\n`;
   out += desde ? `Período: desde el ${new Date(desde).toLocaleDateString('es-AR')} (últimas 4 semanas)\n` : `Período: todo el historial\n`;
+  if(state.plan) out += `${planATexto(state.plan)}\nHoy: ${textoSemana()}\n`;
   const usados = new Set();
   enPeriodo(state.history, desde).forEach(h=>{
     const fecha = new Date(h.fecha).toLocaleDateString('es-AR');
-    out += `\n${fecha} - ${h.dayName}\n`;
+    out += `\n${fecha} - ${h.dayName}${h.bloque ? ` [${h.bloque}]` : ''}\n`;
     h.exercises.forEach(e=>{
       const hechos = setsHechos(e);
       if(!hechos.length) return;
@@ -1044,7 +1109,7 @@ function generarInforme(desde){
     out += `\n\n=== TURNO TARDE (rutina aparte, fuera de la rotación de días) ===\n`;
     tarde.forEach(h=>{
       const fecha = new Date(h.fecha).toLocaleDateString('es-AR');
-      out += `\n${fecha} - ${h.dayName.replace('Turno tarde: ','')}\n`;
+      out += `\n${fecha} - ${h.dayName.replace('Turno tarde: ','')}${h.bloque ? ` [${h.bloque}]` : ''}\n`;
       h.exercises.forEach(e=>{
         if(e.cardio){ out += `  Cardio: ${fmtCardio(e.cardioData)}\n`; return; }
         const setsStr = e.sets.map(s=>`${fmtSet(s, e.medida)}${s.rpe?` RPE${s.rpe}`:''}`).join(', ');
@@ -1154,6 +1219,7 @@ function informeProgreso(usados, desde){
 function informeRutinaActual(){
   if(!state.routine) return '';
   let out = `\n\n=== RUTINA ACTUAL (mismo formato para cargarla) ===\n`;
+  if(state.plan) out += `${planATexto(state.plan)}\n`;
   state.routine.days.forEach((d,i)=>{ out += diaToText(d, i); });
   if(state.routineTarde) out += `\n${tardeToText(state.routineTarde)}`;
   return out;
@@ -1347,7 +1413,8 @@ function bloqueCargaRutina(textoBoton, onCargar){
     <p class="muted">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio: nombre + datos separados por <b> | </b>.</p>
     <p class="codigo">DIA 1: [nombre del día]
 [Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]</p>
-    <p class="muted" style="margin-top:8px"><b>descanso</b> en segundos · <b>calentamiento</b>/<b>aproximacion</b> = cantidad de series de ese tipo · <b>series</b> = series de trabajo · <b>reps</b> = rango · <b>alt</b> = sustitutos (opcional) · <b>medida</b> opcional: reps, seg, kg+reps, kg+seg, kg+m.</p>`));
+    <p class="muted" style="margin-top:8px"><b>descanso</b> en segundos · <b>calentamiento</b>/<b>aproximacion</b> = cantidad de series de ese tipo · <b>series</b> = series de trabajo · <b>reps</b> = rango · <b>alt</b> = sustitutos (opcional) · <b>medida</b> opcional: reps, seg, kg+reps, kg+seg, kg+m.</p>
+    <p class="muted" style="margin-top:8px">Opcional, arriba de todo: <b>PLAN: Fuerza 3 | Potencia 3</b> (bloques y semanas). Circuitos: <b>CIRCUITO 3 vueltas | descanso 90</b>, los ejercicios, y <b>FIN CIRCUITO</b>.</p>`));
   const msg = el(`<div style="font-size:12px;color:var(--success);text-align:center;margin:6px 0"></div>`);
   box.appendChild(boton(`${icon('copy')} Copiar prompt para pedírselo a una IA`, 'btn-full', ()=>copiarTexto(PROMPT_GENERADOR, msg, 'Prompt copiado, pegalo en tu IA preferida')));
   box.appendChild(msg);
@@ -1376,8 +1443,8 @@ function screenInicio(){
   const ses = state.activeSession;
   wrap.appendChild(encabezado('Entreno', botonesMusica()));
 
-  if(state.showWeekBanner){
-    const b = el(`<button class="banner">${icon('wand')}<span>Completaste la semana ${state.showWeekBanner}: exportá tu informe para el Project.</span></button>`);
+  if(state.aviso){
+    const b = el(`<button class="banner">${icon('wand')}<span>${esc(textoAviso(state.aviso))}</span></button>`);
     b.onclick = ()=>{ histVista='sesiones'; histDetalle=null; setTab('historial'); };
     wrap.appendChild(b);
   }
@@ -1397,7 +1464,8 @@ function screenInicio(){
 }
 function tarjetaHoy(day, dayIdx, n, ses){
   const hoy = el(`<div class="card" style="margin-bottom:12px">
-    <div style="display:flex;justify-content:space-between;font-size:13px" class="secondary"><span>Hoy · Semana ${weekNumber()} de 12</span><span>Día ${dayIdx+1} de ${n}</span></div>
+    <div style="display:flex;justify-content:space-between;font-size:13px" class="secondary"><span>Hoy · ${esc(textoSemanaCorto())}</span><span>Día ${dayIdx+1} de ${n}</span></div>
+    ${state.plan ? `<p style="font-size:13px;font-weight:600;color:var(--accent);margin-top:4px">${esc(textoBloque())}</p>` : ''}
     <h1 style="font-size:30px;margin:6px 0 2px">${esc(day.name)}</h1>
     <p class="secondary" style="font-size:14px;margin-bottom:16px">${day.exercises.length} ejercicios</p>
   </div>`);
@@ -1460,6 +1528,50 @@ function detalleEjercicio(e){
   if(!e.circuito) partes.push(`desc ${fmtDescanso(e.descanso)}`);
   return partes.join(' · ') || 'en circuito';
 }
+function tarjetaPlan(){
+  const abrir = ()=>abrirModal('plan', screenPlan);
+  if(!state.plan){
+    const b = boton(`${icon('plus')} Agregar plan por bloques`, 'btn-dashed btn-full', abrir);
+    b.style.marginBottom = '12px';
+    return b;
+  }
+  const actual = bloqueDe(semanaActual());
+  const card = el(`<div class="card" style="padding:14px 16px;margin-bottom:12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><div><p class="muted" style="font-size:12px;font-weight:600">PLAN</p><p style="font-size:14px;margin-top:2px">${esc(textoSemanaCorto())}</p><p style="font-size:13px;font-weight:600;color:var(--accent)">${esc(textoBloque())}</p></div></div><div class="plan-bloques"></div></div>`);
+  card.firstChild.appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', abrir));
+  state.plan.bloques.forEach((b, i)=>{
+    const clase = !actual ? 'hecho' : (i < actual.i ? 'hecho' : (i===actual.i ? 'actual' : ''));
+    card.lastChild.appendChild(el(`<div class="plan-bloque ${clase}" style="flex:${b.semanas}"><span>${esc(b.nombre)}</span><span>${b.semanas} sem</span></div>`));
+  });
+  return card;
+}
+function screenPlan(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(cerrarModal));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Plan por bloques</h2>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">Lo arma el Project. Bloques separados por <b>|</b>, cada uno con su nombre y sus semanas.</p>`));
+  const campos = el(`<div class="pila">
+    <div class="campo"><label for="planTexto">Línea del plan</label><input id="planTexto" type="text" placeholder="PLAN: Hipertrofia 4 | Fuerza 3 | Descarga 1" value="${state.plan ? esc(planATexto(state.plan)) : ''}"></div>
+    <div class="campo"><label for="planSemana">Semana en la que estás</label><input id="planSemana" type="number" inputmode="numeric" min="1" value="${state.plan ? semanaActual() : 1}"></div>
+  </div>`);
+  wrap.appendChild(campos);
+  wrap.appendChild(boton('Guardar plan', 'btn-primary btn-full', ()=>{
+    const bloques = parsePlan(document.getElementById('planTexto').value.replace(/^\s*PLAN\s*:/i, ''));
+    if(!bloques){ alert('No se pudo leer el plan. Ejemplo: PLAN: Fuerza 3 | Potencia 3'); return; }
+    state.plan = {bloques};
+    state.semana = Math.max(1, parseInt(document.getElementById('planSemana').value, 10) || 1);
+    state.aviso = null;
+    saveState(); cerrarModal();
+  }));
+  wrap.lastChild.style.marginTop = '14px';
+  if(state.plan){
+    wrap.appendChild(boton(`${icon('trash')} Quitar plan`, 'btn-ghost btn-full', ()=>{
+      if(!confirm('¿Quitar el plan? La rutina y el historial no cambian.')) return;
+      state.plan = null; state.aviso = null;
+      saveState(); cerrarModal();
+    }));
+  }
+  return wrap;
+}
 function textoCircuito(c){ return `Circuito · ${c.vueltas} vueltas · desc ${fmtDescanso(c.descanso)}`; }
 function listaEjerciciosRutina(lista){
   const ul = el(`<div style="margin-top:8px"></div>`);
@@ -1493,6 +1605,7 @@ function screenRutina(){
     return wrap;
   }
 
+  wrap.appendChild(tarjetaPlan());
   const hoyIdx = todayDayIndex();
   const lista = el(`<div class="pila"></div>`);
   state.routine.days.forEach((d,i)=>{
@@ -1591,10 +1704,10 @@ function screenAjustes(){
   wrap.appendChild(etiqueta('Avance'));
   wrap.appendChild(grupo(
     itemFila({icono:'reset', titulo:'Reiniciar semana actual', sub:'Volver al Día 1 de esta semana', derecha:chevron(), onClick:()=>{
-      if(confirm('¿Volver a repetir la semana actual desde el Día 1?')){ state.slot = Math.floor(state.slot/diasPorSemana())*diasPorSemana(); state.showWeekBanner = null; saveState(); render(); }
+      if(confirm('¿Volver a repetir la semana actual desde el Día 1?')){ state.slot = Math.floor(state.slot/diasPorSemana())*diasPorSemana(); state.aviso = null; saveState(); render(); }
     }}),
     itemFila({icono:'reset', titulo:'Reiniciar rutina completa', sub:'Volver a Semana 1. El historial no se borra.', derecha:chevron(), onClick:()=>{
-      if(confirm('¿Reiniciar toda la rutina desde Semana 1? El historial de sesiones ya guardado no se borra.')){ state.slot = 0; state.showWeekBanner = null; saveState(); render(); }
+      if(confirm('¿Reiniciar toda la rutina desde Semana 1? El historial de sesiones ya guardado no se borra.')){ state.slot = 0; state.semana = 1; state.aviso = null; saveState(); render(); }
     }})
   ));
 
@@ -2103,8 +2216,8 @@ function screenResumen(){
   if(r.comparacion!==null && r.comparacion!==undefined){
     wrap.appendChild(el(`<p class="secondary" style="font-size:14px;margin-bottom:8px">${r.comparacion>=0?'+':''}${r.comparacion}% de volumen vs. la última vez que hiciste ${esc(r.dayName)}</p>`));
   }
-  if(state.showWeekBanner){
-    wrap.appendChild(el(`<div class="banner" style="margin-top:8px">${icon('wand')}<span>Completaste la semana ${state.showWeekBanner}: exportá tu informe para el Project.</span></div>`));
+  if(state.aviso){
+    wrap.appendChild(el(`<div class="banner" style="margin-top:8px">${icon('wand')}<span>${esc(textoAviso(state.aviso))}</span></div>`));
   }
   wrap.appendChild(boton('Volver al inicio', 'btn-primary btn-full', ()=>{ setSessionView('activa'); setTab('inicio'); }));
   wrap.lastChild.style.marginTop = '16px';

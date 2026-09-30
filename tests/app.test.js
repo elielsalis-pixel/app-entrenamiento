@@ -52,7 +52,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
 
   // --- inicio
   ok('inicio: día de hoy', await page.isVisible('h1:has-text("Push")'));
-  ok('inicio: semana 1 de 12', await visible('Hoy · Semana 1 de 12'));
+  ok('inicio: semana sin plan (sin número inventado)', await visible('Hoy · Semana 1') && !(await visible('de 12')));
   ok('inicio: botones Spotify/YouTube', await page.isVisible('[aria-label="Abrir Spotify"]') && await page.isVisible('[aria-label="Abrir YouTube"]'));
   ok('inicio: 5 pestañas con Ajustes', await ev(()=>[...document.querySelectorAll('#tabbar button')].map(b=>b.textContent.trim()).join()==='Inicio,Sesión,Rutina,Historial,Ajustes'));
   await tocar('.semana [aria-label^="Pull"]');
@@ -258,6 +258,42 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await page.locator('.item:has-text("Plancha")').first().click();
   ok('circuito: crear uno nuevo y sumarle ejercicios', await ev(()=>{ const ex=state.routine.days[0].exercises; const nuevo=ex.slice(3); return ex.length===5 && nuevo.every(e=>e.circuito && e.circuito.id===nuevo[0].circuito.id && e.series===3) && nuevo[0].circuito.id!==ex[0].circuito.id; }) && await page.locator('.bloque-circuito').count()===2);
   await ev(t=>{ Object.keys(state).forEach(k=>delete state[k]); Object.assign(state, JSON.parse(t)); editor=null; saveState(); setTab('rutina'); }, estadoCirc);
+
+  // --- plan por bloques
+  const estadoPlan = await ev(()=>JSON.stringify(state));
+  ok('plan: se lee la línea PLAN', await ev(()=>{ const r=parseRoutine('PLAN: Hipertrofia 4 | Fuerza 3 semanas | Descarga 1\nDIA 1: A\nRemo con barra'); return r.plan.length===3 && r.plan[1].nombre==='Fuerza' && r.plan[1].semanas===3 && r.days.length===1 && parsePlan('cualquier cosa')===null; }));
+  const plan = await ev(()=>{
+    state.plan={bloques:[{nombre:'Hipertrofia',semanas:2},{nombre:'Fuerza',semanas:1}]}; state.semana=1; state.slot=0; state.aviso=null;
+    const n=diasPorSemana(), r={};
+    for(let i=0;i<n;i++) avanzarSlot();
+    r.s2 = textoSemana(); r.aviso1 = state.aviso;
+    for(let i=0;i<n;i++) avanzarSlot();
+    r.aviso2 = state.aviso && textoAviso(state.aviso); r.s3 = textoSemana();
+    for(let i=0;i<n;i++) avanzarSlot();
+    r.aviso3 = state.aviso && textoAviso(state.aviso); r.s4 = textoSemana();
+    state.plan=null; state.semana=1; state.slot=0; state.aviso=null;
+    for(let i=0;i<4*n;i++) avanzarSlot();
+    r.sinPlan = state.aviso && textoAviso(state.aviso);
+    return r;
+  });
+  ok('plan: semana y bloque', plan.s2==='Semana 2 de 3 · Hipertrofia (2 de 2)' && plan.s3==='Semana 3 de 3 · Fuerza (1 de 1)' && plan.aviso1===null, JSON.stringify(plan));
+  ok('plan: aviso al terminar el bloque sin nombrar el siguiente', plan.aviso2==='Terminaste el bloque Hipertrofia: exportá el informe y pedile al Project cómo seguir.');
+  ok('plan: aviso al terminar el plan', plan.aviso3.startsWith('Terminaste el plan') && plan.s4==='Semana 4 · plan terminado');
+  ok('plan: sin plan, aviso cada 4 semanas', plan.sinPlan==='Completaste la semana 4: exportá tu informe para el Project.');
+  await ev(()=>{ state.plan={bloques:[{nombre:'Hipertrofia',semanas:4},{nombre:'Fuerza',semanas:3}]}; state.semana=2; state.slot=0; state.activeSession=null; saveState(); setTab('rutina'); });
+  ok('plan: tarjeta en Rutina con el bloque actual', await page.isVisible('.plan-bloque.actual:has-text("Hipertrofia")') && await visible('Semana 2 de 7') && await visible('Hipertrofia (2 de 4)'));
+  await page.locator('.card:has(.plan-bloques) button:has-text("Editar")').click();
+  await page.fill('#planTexto', 'PLAN: Fuerza 3 | Potencia 3');
+  await page.fill('#planSemana', '4');
+  await tocar('text=Guardar plan');
+  ok('plan: editar desde la app', await ev(()=>state.plan.bloques.map(b=>b.nombre).join()==='Fuerza,Potencia' && state.semana===4) && await visible('Semana 4 de 6') && await visible('Potencia (1 de 3)'));
+  await ev(()=>{ empezarSesion(0); state.activeSession.exercises[0].sets[0].done=true; finalizarSesion(); });
+  ok('plan: la sesión queda marcada con su bloque', await ev(()=>state.history[state.history.length-1].bloque==='Potencia'));
+  ok('plan: en el informe', await ev(()=>{ const t=generarInforme(0); return t.includes('PLAN: Fuerza 3 | Potencia 3\nHoy: Semana 4 de 6 · Potencia (1 de 3)') && / - Push \[Potencia\]/.test(t) && t.includes('=== RUTINA ACTUAL (mismo formato para cargarla) ===\nPLAN: Fuerza 3 | Potencia 3\nDIA 1'); }));
+  await ev(t=>{ Object.keys(state).forEach(k=>delete state[k]); Object.assign(state, JSON.parse(t)); state.showWeekBanner=4; saveState(); }, estadoPlan);
+  await page.reload(); await page.waitForTimeout(300);
+  ok('plan: migra el aviso viejo', await ev(()=>state.aviso && state.aviso.tipo==='semana' && state.aviso.semana===4 && !('showWeekBanner' in state)));
+  await ev(()=>{ state.aviso=null; saveState(); setSessionView('activa'); setTab('rutina'); });
   await tocar('text=Cargar rutina nueva completa');
   await tocar('text=Ver formato');
   ok('rutina: ver formato', await visible('Cada día empieza con'));
@@ -494,8 +530,8 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
 
   // --- rotación con 4 días y aviso de bloque
   ok('rotación y aviso según días de la rutina', await ev(()=>{
-    state.routine={days:[1,2,3,4].map(i=>({name:'D'+i,exercises:[]}))}; state.slot=0; const nombres=[]; const avisos=[];
-    for(let i=0;i<32;i++){ nombres.push(state.routine.days[todayDayIndex()].name); avanzarSlot(); if(state.showWeekBanner) avisos.push(state.showWeekBanner); }
+    state.routine={days:[1,2,3,4].map(i=>({name:'D'+i,exercises:[]}))}; state.slot=0; state.semana=1; state.plan=null; const nombres=[]; const avisos=[];
+    for(let i=0;i<32;i++){ nombres.push(state.routine.days[todayDayIndex()].name); avanzarSlot(); if(state.aviso) avisos.push(state.aviso.semana); }
     return nombres.slice(0,6).join()==='D1,D2,D3,D4,D1,D2' && avisos.join()==='4,8';
   }));
 
