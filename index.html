@@ -879,13 +879,16 @@ function finalizarSesion(){
     if(!hechas.length) return; // no hecho: no se registra ni cambia lo guardado para la próxima
     if(esKgReps(e.medida)) hechas.forEach(s=>{ volumenTotal += s.peso*s.reps; });
     state.lastSetsByDayExercise[clave + '::' + e.nombre] = hechas.map(({rpe, done, ...v})=>v);
-    if(!tarde){
+    if(!tarde && esKgReps(e.medida)){
       const normales = hechas.filter(s=>s.tipo==='Normal' && s.peso>0);
       const ref = normales.length ? normales[normales.length-1] : hechas[hechas.length-1];
       registrarCambioPeso(e.nombre, ref.peso, ref.reps, `Fin de sesión (${ses.dayName})`);
       state.lastByExercise[e.nombre] = {peso: ref.peso, reps: ref.reps};
     }
-    exercises.push(tarde ? {nombre:e.nombre, medida:e.medida, sets:hechas} : {nombre:e.nombre, sets:hechas});
+    // la mañana guarda la medida solo si no es kg+reps (lo implícito)
+    const registro = {nombre:e.nombre, sets:hechas};
+    if(tarde || e.medida) registro.medida = e.medida;
+    exercises.push(registro);
   });
 
   const record = {fecha: new Date().toISOString(), exercises, duracionSeg, volumenTotal, prCount, comparacion: null};
@@ -974,7 +977,7 @@ function generarInforme(desde){
     h.exercises.forEach(e=>{
       const hechos = setsHechos(e);
       if(!hechos.length) return;
-      const setsStr = hechos.map(s=>`${s.peso}kg x ${s.reps}${s.rpe?` RPE${s.rpe}`:''} (${s.tipo})`).join(', ');
+      const setsStr = hechos.map(s=>`${fmtSet(s, e.medida)}${s.rpe?` RPE${s.rpe}`:''} (${s.tipo})`).join(', ');
       out += `  ${e.nombre}: ${setsStr}\n`;
       usados.add(e.nombre);
     });
@@ -1010,16 +1013,118 @@ function generarInforme(desde){
     out += `\n\n=== NOTAS DE EJERCICIOS (vigentes) ===\n`;
     notas.forEach(n=>{ out += `${n}: ${state.notasEjercicio[n]}\n`; });
   }
+  const sesiones = [...enPeriodo(state.history, desde), ...enPeriodo(state.historyTarde, desde)].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+  out += informeSeriesPorMusculo(sesiones);
+  out += informeProgreso(usados, desde);
+  out += informeRutinaActual();
+  out += informeBiblioteca();
   return out;
 }
 
+/* ---------- informe: análisis para el Project ---------- */
+function esEfectiva(s){ return ['Normal','Fallo'].includes(s.tipo || 'Normal'); }
+function fechaCorta(f){ const d = new Date(f); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`; }
+// directas: el músculo es principal en el ejercicio; indirectas: trabaja como secundario
+function informeSeriesPorMusculo(sesiones){
+  const semanas = new Map();
+  const sinDatos = new Set();
+  sesiones.forEach(h=>{
+    const k = inicioSemana(h.fecha).getTime();
+    if(!semanas.has(k)) semanas.set(k, {directas:{}, indirectas:{}});
+    const sem = semanas.get(k);
+    h.exercises.forEach(e=>{
+      const n = e.cardio ? 0 : setsHechos(e).filter(esEfectiva).length;
+      if(!n) return;
+      const x = buscarEjercicio(e.nombre);
+      if(!x){ sinDatos.add(e.nombre); return; }
+      x.principal.forEach(m=>{ sem.directas[m] = (sem.directas[m]||0) + n; });
+      x.secundarios.forEach(m=>{ sem.indirectas[m] = (sem.indirectas[m]||0) + n; });
+    });
+  });
+  if(!semanas.size) return '';
+  let out = `\n\n=== SERIES EFECTIVAS POR MÚSCULO Y SEMANA ===\n`;
+  out += `Cuenta series normales y al fallo (sin calentamiento ni aproximación), mañana y tarde. Directas: el músculo es el principal del ejercicio. Indirectas: trabaja como secundario.\n`;
+  [...semanas.keys()].sort((a,b)=>a-b).forEach(k=>{
+    const {directas, indirectas} = semanas.get(k);
+    out += `\nSemana del ${fechaCorta(k)}\n`;
+    MUSCULOS.filter(m=>directas[m] || indirectas[m]).forEach(m=>{
+      const partes = [];
+      if(directas[m]) partes.push(`${directas[m]} directas`);
+      if(indirectas[m]) partes.push(`${indirectas[m]} indirectas`);
+      out += `  ${m}: ${partes.join(' + ')}\n`;
+    });
+  });
+  if(sinDatos.size) out += `\nSin datos de músculo (no están en la biblioteca): ${[...sinDatos].join(', ')}\n`;
+  return out;
+}
+// mejor marca de una sesión según cómo se mide; en los asistidos, menos peso es mejor
+function marcaDeSesion(e){
+  const sets = setsHechos(e).filter(esEfectiva);
+  if(!sets.length) return null;
+  const campos = camposDe(e.medida);
+  if(/asistid/.test(normalizarNombre(e.nombre))) return {v: Math.min(...sets.map(s=>s.peso||0)), unidad: 'kg de asistencia (menos es mejor)', menosEsMejor: true};
+  const conPeso = sets.some(s=>s.peso > 0);
+  if(campos.join('+')==='peso+reps' && !conPeso) return {v: Math.max(...sets.map(s=>s.reps||0)), unidad: 'reps'};
+  if(campos.join('+')==='peso+reps') return {v: Math.max(...sets.map(s=>estimar1RM(s.peso||0, s.reps||0))), unidad: 'kg 1RM estimado'};
+  const campo = campos.includes('peso') ? 'peso' : campos[0];
+  return {v: Math.max(...sets.map(s=>s[campo]||0)), unidad: {peso:'kg', reps:'reps', seg:'seg'}[campo]};
+}
+function marcasDe(nombre){
+  return [...(state.history||[]), ...(state.historyTarde||[])]
+    .sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))
+    .map(h=>{ const e = h.exercises.find(x=>x.nombre===nombre && !x.cardio); const m = e && marcaDeSesion(e); return m && {...m, fecha: h.fecha}; })
+    .filter(Boolean);
+}
+const SESIONES_ESTANCADO = 3;
+function informeProgreso(usados, desde){
+  const lineas = [];
+  [...usados].forEach(nombre=>{
+    const todas = marcasDe(nombre);
+    const periodo = todas.filter(m=>new Date(m.fecha).getTime() >= (desde||0));
+    if(!periodo.length) return;
+    const mejor = (a,b)=>todas[0].menosEsMejor ? a < b : a > b;
+    const ini = periodo[0], fin = periodo[periodo.length-1];
+    let linea = `${nombre}: ${ini.v} → ${fin.v} ${fin.unidad} · ${periodo.length} ${periodo.length===1 ? 'sesión' : 'sesiones'}`;
+    if(ini.v && fin.v!==ini.v) linea += ` (${fin.v > ini.v ? '+' : ''}${Math.round((fin.v-ini.v)/ini.v*100)}%)`;
+    if(todas.length > SESIONES_ESTANCADO){
+      const previas = todas.slice(0, -SESIONES_ESTANCADO).map(m=>m.v);
+      const record = previas.reduce((a,b)=>mejor(b,a) ? b : a);
+      if(!todas.slice(-SESIONES_ESTANCADO).some(m=>mejor(m.v, record))) linea += ` · ESTANCADO: ${SESIONES_ESTANCADO} sesiones sin superar ${record}`;
+    }
+    lineas.push(linea);
+  });
+  if(!lineas.length) return '';
+  return `\n\n=== PROGRESO POR EJERCICIO (primera → última sesión del período) ===\n${lineas.join('\n')}\n`;
+}
+function informeRutinaActual(){
+  if(!state.routine) return '';
+  let out = `\n\n=== RUTINA ACTUAL (mismo formato para cargarla) ===\n`;
+  state.routine.days.forEach((d,i)=>{ out += diaToText(d, i); });
+  if(state.routineTarde) out += `\n${tardeToText(state.routineTarde)}`;
+  return out;
+}
+function informeBiblioteca(){
+  const noHay = BIBLIOTECA.filter(x=>!disponible(x)).map(x=>x.nombre);
+  const propios = (state.bibliotecaPropia||[]).map(x=>`${x.nombre} (${PATRONES[x.patron]} · ${x.principal.join(', ')} · ${x.equipo} · carga lumbar ${x.lumbar} · se mide en ${x.medida})`);
+  const enRutina = [...(state.routine ? state.routine.days.flatMap(d=>d.exercises) : []), ...(state.routineTarde ? state.routineTarde.exercises : [])];
+  const fuera = [...new Set(enRutina.filter(e=>!e.cardio && !buscarEjercicio(e.nombre)).map(e=>e.nombre))];
+  if(!noHay.length && !propios.length && !fuera.length) return '';
+  let out = `\n\n=== BIBLIOTECA Y GIMNASIO ===\n`;
+  if(noHay.length) out += `No hay en mi gimnasio: ${noHay.join(', ')}\n`;
+  if(propios.length) out += `Ejercicios propios:\n${propios.map(p=>`  ${p}`).join('\n')}\n`;
+  if(fuera.length) out += `En la rutina pero fuera de la biblioteca: ${fuera.join(', ')}\n`;
+  return out;
+}
+
+// columnas Kg, Reps, Seg, Metros: vacías las que no usa la medida
+function valoresSerie(s, medida){ const c = camposDe(medida); return ['peso','reps','seg','m'].map(k=>c.includes(k) ? s[k] : ''); }
 function generarCSV(desde){
-  const rows = [['Fecha','Dia','Ejercicio','Serie','Peso','Reps','Tipo','RPE']];
+  const rows = [['Fecha','Dia','Ejercicio','Serie','Medida','Kg','Reps','Seg','Metros','Tipo','RPE']];
   enPeriodo(state.history, desde).forEach(h=>{
     const fecha = new Date(h.fecha).toLocaleDateString('es-AR');
     h.exercises.forEach(e=>{
       setsHechos(e).forEach((s,i)=>{
-        rows.push([fecha, h.dayName, e.nombre, i+1, s.peso, s.reps, s.tipo, s.rpe||'']);
+        rows.push([fecha, h.dayName, e.nombre, i+1, e.medida || 'kg+reps', ...valoresSerie(s, e.medida), s.tipo, s.rpe||'']);
       });
     });
   });
@@ -1033,10 +1138,7 @@ function generarCSV(desde){
       const nombreR = h.dayName.replace('Turno tarde: ','');
       h.exercises.forEach(e=>{
         if(e.cardio){ rowsT.push([fecha, nombreR, e.nombre, '', 'cardio', '', '', '', '', '', fmtCardio(e.cardioData)]); return; }
-        e.sets.forEach((s,i)=>{
-          const c = camposDe(e.medida);
-          rowsT.push([fecha, nombreR, e.nombre, i+1, e.medida, c.includes('peso')?s.peso:'', c.includes('reps')?s.reps:'', c.includes('seg')?s.seg:'', c.includes('m')?s.m:'', s.rpe||'', '']);
-        });
+        e.sets.forEach((s,i)=>rowsT.push([fecha, nombreR, e.nombre, i+1, e.medida, ...valoresSerie(s, e.medida), s.rpe||'', '']));
       });
     });
     csv += '\n\n' + aCSV(rowsT);

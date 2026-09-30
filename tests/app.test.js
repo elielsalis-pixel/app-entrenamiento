@@ -395,6 +395,30 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   const inf = await clip();
   const falta = ['Fondo de máquina asistido','TURNO TARDE','EJERCICIOS SUELTOS','Crunch en polea (kg+reps)','Cardio: Cinta','Cardio: Bici vieja · 20 min','Agarre (Dead hang)'].filter(t=>!inf.includes(t));
   ok('informe: mañana, tarde y sueltos', !falta.length, 'falta: '+falta.join(', '));
+  const analisis = await ev(()=>{
+    const copia = JSON.stringify(state);
+    const S = (fecha, sets)=>({fecha, dayName:'Push', exercises:[{nombre:'Press banca plano', sets}], duracionSeg:600});
+    const n = (peso, reps, tipo)=>({peso, reps, tipo: tipo||'Normal', done:true});
+    state.history = [
+      S('2026-09-01T12:00:00Z', [n(20,10,'Calentamiento'), n(80,8), n(80,8)]),
+      S('2026-09-03T12:00:00Z', [n(80,8)]), S('2026-09-08T12:00:00Z', [n(80,7)]), S('2026-09-10T12:00:00Z', [n(80,8)]),
+      {fecha:'2026-09-10T13:00:00Z', dayName:'Push', exercises:[{nombre:'Plancha', medida:'seg', sets:[{seg:40, tipo:'Normal', done:true},{seg:60, tipo:'Normal', done:true}]},{nombre:'Fondo de máquina asistido', sets:[n(45,10), n(30,10)]},{nombre:'Invento xyz', sets:[n(10,10)]}], duracionSeg:600}];
+    state.historyTarde = []; state.actividadesExtra = [];
+    state.noDisponibles = [buscarEjercicio('Prensa de piernas').id];
+    state.bibliotecaPropia = [{id:'propio-1', nombre:'Remo Hammer casero', alias:['remo hammer casero'], patron:'tiron_h', principal:['Dorsales'], secundarios:[], equipo:'Máquina', lumbar:'baja', medida:'kg+reps', fotos:[], propio:true}];
+    const txt = generarInforme(0);
+    const csv = generarCSV(0);
+    Object.assign(state, JSON.parse(copia)); saveState();
+    return {txt, csv};
+  });
+  const I = analisis.txt;
+  ok('informe: series efectivas por semana sin calentamiento', /Semana del 31\/08\n  Pecho: 3 directas/.test(I) && /Tríceps: \d+ indirectas/.test(I), I.slice(I.indexOf('=== SERIES'), I.indexOf('=== SERIES')+300));
+  ok('informe: sin datos de músculo', I.includes('Sin datos de músculo (no están en la biblioteca): Invento xyz'));
+  ok('informe: progreso con 1RM y estancamiento', I.includes('Press banca plano: 101 → 101 kg 1RM estimado · 4 sesiones · ESTANCADO: 3 sesiones sin superar 101'), I.slice(I.indexOf('=== PROGRESO'), I.indexOf('=== PROGRESO')+400));
+  ok('informe: medida en segundos y asistidos', I.includes('Plancha: 60 → 60 seg') && I.includes('Plancha: 40 seg (Normal), 60 seg (Normal)') && I.includes('kg de asistencia (menos es mejor)'));
+  ok('informe: rutina actual en formato de carga', I.includes('=== RUTINA ACTUAL') && I.includes('DIA 1: Push') && I.includes('TARDE: Cardio + Abs'));
+  ok('informe: biblioteca y gimnasio', I.includes('No hay en mi gimnasio: Prensa de piernas') && I.includes('Remo Hammer casero (') && I.includes('se mide en kg+reps'));
+  ok('CSV: medida y columnas por tipo', analisis.csv.includes('"Plancha","1","seg","","","40"'));
   await tocar('text=Copiar CSV');
   const csv = await clip();
   ok('CSV: tres bloques', csv.includes('"Fecha","Dia"') && csv.includes('"Turno tarde"') && csv.includes('"Fecha","Tipo"'));
