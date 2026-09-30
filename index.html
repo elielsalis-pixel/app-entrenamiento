@@ -51,6 +51,11 @@
   .btn-dashed{background:transparent;border:1px dashed var(--border);color:var(--text-2);font-size:14px}
   .btn-danger{background:var(--danger);color:#fff;border:none;font-weight:600}
   .btn-full{width:100%}
+  .btn:disabled{opacity:.35}
+  .btn-app{min-height:40px;padding:0 10px;gap:6px}
+  .acciones-editor{display:flex;gap:6px}
+  .acciones-editor .btn{flex:1;min-width:0;padding:0 8px}
+  .acciones-editor .btn[aria-label]{flex:0 0 40px;padding:0}
   .iconbtn{width:44px;height:44px;border-radius:12px;border:1px solid var(--border);background:var(--surface);display:inline-flex;align-items:center;justify-content:center;padding:0;color:var(--text)}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
   .top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
@@ -407,6 +412,8 @@ function parseLineaEjercicio(line, def){
   const parts = line.split('|').map(p=>p.trim());
   if(!parts[0]) return null;
   const e = {nombre: parts[0], ...def, alternativas: []};
+  // sin "medida" en el renglón, manda la biblioteca (ej. Plancha se mide en segundos)
+  if(!parts.some(p=>/medida\s*[a-z+]+/i.test(p))) ponerMedida(e, medidaPara(buscarEjercicio(e.nombre), def===DEF_TARDE, e.medida));
   parts.slice(1).forEach(p=>{
     let m;
     if((m = p.match(/descanso\s*(\d+)/i))) e.descanso = parseInt(m[1],10);
@@ -446,7 +453,7 @@ function parseRoutine(text){
 let currentTab = state.currentTab || 'inicio';
 let sessionView = state.sessionView || 'activa';
 
-function setTab(id){ if(currentTab==='sesion' && id!=='sesion' && sessionView==='resumen') setSessionView('activa'); currentTab = id; state.currentTab = id; saveState(); render(); }
+function setTab(id){ modal = null; revision = null; if(currentTab==='sesion' && id!=='sesion' && sessionView==='resumen') setSessionView('activa'); currentTab = id; state.currentTab = id; saveState(); render(); }
 function setSessionView(v){ sessionView = v; state.sessionView = v; saveState(); }
 
 
@@ -483,13 +490,16 @@ function cargarRutina(){
   const txt = document.getElementById('routinepaste').value;
   const parsed = parseRoutine(txt);
   if(!parsed.days.length){ alert('No se pudo leer la rutina. Revisá el formato.'); return; }
-  const reemplazando = !!state.routine;
-  state.routine = parsed;
-  rutinaSub = null;
-  if(reemplazando && confirm('¿Arrancar la rutina nueva desde la Semana 1, Día 1?')){ state.slot = 0; state.showWeekBanner = null; }
-  saveState();
-  if(reemplazando){ currentTab='inicio'; state.currentTab='inicio'; }
-  render();
+  revisarYGuardar({titulo: 'Revisar rutina', grupos: parsed.days.map(d=>({nombre: d.name, ejercicios: d.exercises})), tarde: false,
+    texto: {id: 'routinepaste', valor: txt}, guardar: ()=>{
+      const reemplazando = !!state.routine;
+      state.routine = parsed;
+      rutinaSub = null;
+      if(reemplazando && confirm('¿Arrancar la rutina nueva desde la Semana 1, Día 1?')){ state.slot = 0; state.showWeekBanner = null; }
+      saveState();
+      if(reemplazando){ currentTab='inicio'; state.currentTab='inicio'; }
+      render();
+    }});
 }
 
 /* ---------- turno tarde: rutina aparte, fuera de la rotación de 5 días ---------- */
@@ -537,9 +547,12 @@ function cargarTarde(){
   const txt = document.getElementById('tardePaste').value;
   const parsed = parseTarde(txt);
   if(!parsed){ alert('No se pudo leer. Tiene que empezar con "TARDE: nombre" y tener al menos un ejercicio.'); return; }
-  state.routineTarde = parsed;
-  rutinaSub = null;
-  saveState(); render();
+  revisarYGuardar({titulo: 'Revisar turno tarde', grupos: [{nombre: parsed.name, ejercicios: parsed.exercises}], tarde: true,
+    texto: {id: 'tardePaste', valor: txt}, guardar: ()=>{
+      state.routineTarde = parsed;
+      editor = null;
+      saveState(); render();
+    }});
 }
 function tardeToText(t){ return [`TARDE: ${t.name}`, ...t.exercises.map(ejercicioATexto)].join('\n') + '\n'; }
 
@@ -562,8 +575,6 @@ function fmtCardio(c){
   partes.push(c.medicionTipo==='fc' ? `FC prom ${c.medicionValor}` : `Sensación: ${c.medicionValor}`);
   return partes.join(' · ');
 }
-
-let editDayIdx = null;
 
 function diaToText(day, idx){ return [`DIA ${idx+1}: ${day.name}`, ...day.exercises.map(ejercicioATexto)].join('\n') + '\n'; }
 
@@ -1061,9 +1072,9 @@ const ICONS = {
   chevright:'<path d="M9 18l6-6-6-6"/>',
   photo:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>',
   music:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
-  video:'<rect x="2" y="5" width="15" height="14" rx="3"/><path d="M17 10l5-3v10l-5-3z"/>',
   copy:'<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   arrowup:'<path d="M12 19V5M5 12l7-7 7 7"/>',
+  arrowdown:'<path d="M12 5v14M5 12l7 7 7-7"/>',
   moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   run:'<circle cx="13" cy="4" r="2"/><path d="M7 21l3-6 3 2v5"/><path d="M5 12l3-3 4 1 3 4 3 1"/>',
   grip:'<path d="M6 3v6a6 6 0 0 0 12 0V3"/><path d="M4 21h16"/><path d="M12 15v6"/>',
@@ -1110,11 +1121,12 @@ function segmentado(opciones, actual, onElegir){
   });
   return box;
 }
-function botonesMusica(tam){
-  const box = el(`<div style="display:flex;gap:8px"></div>`);
-  [['music','Abrir Spotify',abrirSpotify],['video','Abrir YouTube',abrirYoutube]].forEach(([ic,lab,fn])=>{
-    const b = el(`<button class="iconbtn" aria-label="${lab}" style="${tam?`width:${tam}px;height:${tam}px`:''}">${icon(ic)}</button>`);
-    b.onclick = fn; box.appendChild(b);
+function botonesMusica(){
+  const box = el(`<div style="display:flex;gap:6px"></div>`);
+  [['music','Spotify',abrirSpotify],['play','YouTube',abrirYoutube]].forEach(([ic,nombre,fn])=>{
+    const b = boton(`${icon(ic)} ${nombre}`, 'btn-sm btn-app', fn);
+    b.setAttribute('aria-label', `Abrir ${nombre}`);
+    box.appendChild(b);
   });
   return box;
 }
@@ -1134,7 +1146,7 @@ const TABS = [
   {id:'ajustes', label:'Ajustes', icon:'gear'}
 ];
 let rutinaVista = 'manana';   // manana | tarde | biblioteca
-let rutinaSub = null;         // null | 'nueva' | 'tarde' | 'ejercicio' | 'nuevoEjercicio'
+let rutinaSub = null;         // null | 'nueva' | 'ejercicio' | 'nuevoEjercicio'
 let ajustesVista = null;      // null | 'sonidos' | 'ajuste'
 let histVista = 'sesiones';   // sesiones | progreso
 let histDetalle = null;       // {lista, i}
@@ -1152,13 +1164,14 @@ function renderTabbar(){
 }
 function claveVista(){
   const s = state.activeSession;
-  return [currentTab, sessionView, s ? s.focusIdx : '', editDayIdx, rutinaVista, rutinaSub, bibDetalle, ajustesVista, histVista, JSON.stringify(histDetalle), extraVista].join('|');
+  return [currentTab, sessionView, s ? s.focusIdx : '', editor ? editor.tipo + editor.idx + editor.texto : '', modal ? modal.clave : '', rutinaVista, rutinaSub, bibDetalle, ajustesVista, histVista, JSON.stringify(histDetalle), extraVista].join('|');
 }
 function render(){
   renderTabbar();
   const s = document.getElementById('screen');
   s.innerHTML = '';
-  if(!state.routine) s.appendChild(screenSinRutina());
+  if(modal) s.appendChild(modal.pintar());
+  else if(!state.routine) s.appendChild(screenSinRutina());
   else if(currentTab==='inicio') s.appendChild(screenInicio());
   else if(currentTab==='sesion') s.appendChild(screenSesionWrap());
   else if(currentTab==='rutina') s.appendChild(screenRutina());
@@ -1290,9 +1303,8 @@ function detalleEjercicio(e){
   return partes.join(' · ');
 }
 function screenRutina(){
-  if(editDayIdx!==null) return screenEditarDia(editDayIdx);
+  if(editor) return screenEditor();
   if(rutinaSub==='nueva') return screenRutinaNueva();
-  if(rutinaSub==='tarde') return screenEditarTarde();
   if(rutinaSub==='ejercicio') return screenEjercicioBiblioteca();
   if(rutinaSub==='nuevoEjercicio') return screenNuevoEjercicio();
   const wrap = document.createElement('div');
@@ -1304,7 +1316,7 @@ function screenRutina(){
     if(!state.routineTarde) return (wrap.appendChild(contenidoEditarTarde()), wrap);
     const t = state.routineTarde;
     const card = el(`<div class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2>${esc(t.name)}</h2></div></div>`);
-    card.firstChild.appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', ()=>{ rutinaSub='tarde'; render(); }));
+    card.firstChild.appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', ()=>abrirEditor('tarde', 0)));
     const ul = el(`<div style="margin-top:8px"></div>`);
     t.exercises.forEach(e=>ul.appendChild(el(`<p class="secondary" style="font-size:14px;padding:3px 0">${esc(e.nombre)} · ${esc(detalleEjercicio(e))}</p>`)));
     card.appendChild(ul);
@@ -1320,7 +1332,7 @@ function screenRutina(){
       <div style="display:flex;align-items:center;gap:8px"><span class="muted" style="font-size:12px;font-weight:600">DÍA ${i+1}</span>${i===hoyIdx?`<span style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-bg);padding:3px 8px;border-radius:6px">Hoy</span>`:''}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px"><h2>${esc(d.name)}</h2></div>
     </div>`);
-    card.children[1].appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', ()=>{ editDayIdx = i; render(); }));
+    card.children[1].appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', ()=>abrirEditor('dia', i)));
     const ul = el(`<div style="margin-top:8px"></div>`);
     d.exercises.forEach(e=>ul.appendChild(el(`<p class="secondary" style="font-size:14px;padding:3px 0">${esc(e.nombre)} · ${esc(detalleEjercicio(e))}</p>`)));
     card.appendChild(ul);
@@ -1356,31 +1368,6 @@ Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? esc(tardeT
   box.lastChild.style.marginTop = '12px';
   return box;
 }
-function screenEditarTarde(){
-  const wrap = document.createElement('div');
-  wrap.appendChild(botonVolver(()=>{ rutinaSub=null; render(); }));
-  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Editar turno tarde</h2>`));
-  wrap.appendChild(contenidoEditarTarde());
-  return wrap;
-}
-function screenEditarDia(idx){
-  const day = state.routine.days[idx];
-  const wrap = document.createElement('div');
-  wrap.appendChild(botonVolver(()=>{ editDayIdx=null; render(); }));
-  wrap.appendChild(el(`<h2 style="margin-bottom:12px">Editar: ${esc(day.name)}</h2>`));
-  wrap.appendChild(el(`<textarea id="daypaste" aria-label="Día en texto">${esc(diaToText(day, idx))}</textarea>`));
-  wrap.appendChild(boton('Guardar cambios de este día', 'btn-primary btn-full', ()=>{
-    const parsed = parseRoutine(document.getElementById('daypaste').value);
-    if(!parsed.days.length){ alert('No se pudo leer el día. Revisá el formato.'); return; }
-    state.routine.days[idx] = parsed.days[0];
-    saveState();
-    editDayIdx = null;
-    render();
-  }));
-  wrap.lastChild.style.marginTop = '12px';
-  return wrap;
-}
-
 /* ---------- pantalla: ajustes ---------- */
 function botonRestaurar(){
   const box = document.createElement('div');
@@ -1539,7 +1526,7 @@ function sesionEncabezado(ses){
   const wrap = document.createDocumentFragment();
   const titulo = ses.turno==='tarde' ? `Turno tarde · ${ses.rutinaNombre||''}` : ses.dayName;
   const top = el(`<div class="top" style="margin-bottom:10px"><p class="secondary" style="font-size:13px;min-width:0">${esc(titulo)} · Ejercicio ${ses.focusIdx+1} de ${ses.exercises.length}</p></div>`);
-  top.appendChild(botonesMusica(40));
+  top.appendChild(botonesMusica());
   wrap.appendChild(top);
   const barra = el(`<div class="segbar"></div>`);
   const nombres = el(`<div style="display:flex;gap:4px;margin-bottom:14px"></div>`);
@@ -2119,6 +2106,12 @@ function buscarEjercicio(nombre){
   const k = normalizarNombre(nombre);
   return BIB_POR_ALIAS.get(k) || (state.bibliotecaPropia||[]).find(x=>normalizarNombre(x.nombre)===k) || null;
 }
+// medida que corresponde según la biblioteca; en la mañana kg+reps es lo implícito y no se guarda
+function medidaPara(x, tarde, actual){
+  if(!x || x.medida==='cardio') return actual;
+  return x.medida==='kg+reps' && !tarde ? undefined : x.medida;
+}
+function ponerMedida(e, medida){ if(medida===undefined) delete e.medida; else e.medida = medida; }
 function disponible(x){ return !(state.noDisponibles||[]).includes(x.id); }
 function imagenDe(nombre){
   const x = buscarEjercicio(nombre);
@@ -2177,11 +2170,10 @@ function aplicarSustitucion(ej, nuevoNombre, paraSiempre){
   const tarde = ses.turno==='tarde';
   const lista = tarde ? state.routineTarde.exercises : state.routine.days[ses.dayIdx % state.routine.days.length].exercises;
   const orig = lista.find(x=>x.nombre===ej.nombre);
-  const lib = buscarEjercicio(nuevoNombre);
-  const medidaNueva = lib && lib.medida!=='cardio' ? (lib.medida==='kg+reps' && !tarde ? undefined : lib.medida) : ej.medida;
+  const medidaNueva = medidaPara(buscarEjercicio(nuevoNombre), tarde, ej.medida);
   if(paraSiempre && orig){
     orig.nombre = nuevoNombre;
-    if(medidaNueva===undefined) delete orig.medida; else orig.medida = medidaNueva;
+    ponerMedida(orig, medidaNueva);
   }
   const nada = !ej.sets.some(s=>s.done);
   ej.nombre = nuevoNombre;
@@ -2304,17 +2296,19 @@ function screenEjercicioBiblioteca(){
   }
   return wrap;
 }
-function screenNuevoEjercicio(){
+// opciones: {nombre} precargado y {volver, alGuardar} para regresar a quien lo abrió
+function screenNuevoEjercicio(opciones){
+  const {nombre: nombreInicial = '', volver = ()=>{ rutinaSub = null; render(); }, alGuardar = volver} = opciones || {};
   const wrap = document.createElement('div');
-  wrap.appendChild(botonVolver(()=>{ rutinaSub = null; render(); }));
+  wrap.appendChild(botonVolver(volver));
   wrap.appendChild(el(`<h2 style="margin-bottom:12px">Agregar ejercicio propio</h2>`));
   const opts = (lista, sel)=>lista.map(([v,t])=>`<option value="${esc(v)}" ${v===sel?'selected':''}>${esc(t)}</option>`).join('');
   const form = el(`<div class="pila">
-    <div class="campo"><label for="nuevoNombre">Nombre</label><input id="nuevoNombre" type="text" placeholder="ej. Remo en máquina Hammer"></div>
+    <div class="campo"><label for="nuevoNombre">Nombre</label><input id="nuevoNombre" type="text" placeholder="ej. Remo en máquina Hammer" value="${esc(nombreInicial)}"></div>
     <div class="campo"><label for="nuevoPatron">Tipo de movimiento</label><select id="nuevoPatron">${opts(Object.entries(PATRONES))}</select></div>
     <div class="campo"><label for="nuevoMusculo">Músculo principal</label><select id="nuevoMusculo">${opts(MUSCULOS.map(m=>[m,m]))}</select></div>
     <div class="campo"><label for="nuevoEquipo">Equipo</label><select id="nuevoEquipo">${opts(EQUIPOS.map(m=>[m,m]), 'Máquina')}</select></div>
-    <div class="campo"><label for="nuevoMedida">Se mide en</label><select id="nuevoMedida">${opts([['kg+reps','Kg y repeticiones'],['reps','Repeticiones'],['seg','Segundos'],['kg+seg','Kg y segundos'],['kg+m','Kg y metros']])}</select></div>
+    <div class="campo"><label for="nuevoMedida">Se mide en</label><select id="nuevoMedida">${opts(NOMBRES_MEDIDA)}</select></div>
     <div class="campo"><label for="nuevoLumbar">Carga en la zona lumbar</label><select id="nuevoLumbar">${opts([['baja','Baja'],['media','Media'],['alta','Alta']])}</select></div>
   </div>`);
   wrap.appendChild(form);
@@ -2327,9 +2321,302 @@ function screenNuevoEjercicio(){
       tipo:'Propio', nivel:'—', lumbar: document.getElementById('nuevoLumbar').value, medida: document.getElementById('nuevoMedida').value,
       mecanica:'', fotos:[], propio:true};
     state.bibliotecaPropia = [...(state.bibliotecaPropia||[]), x];
-    saveState(); rutinaSub = null; render();
+    saveState(); alGuardar(x);
   }));
   wrap.lastChild.style.marginTop = '14px';
+  return wrap;
+}
+
+/* ---------- pantallas por encima de la pestaña (revisar, elegir ejercicio, ejercicio propio) ---------- */
+let modal = null;   // {clave, pintar}
+function abrirModal(clave, pintar){ modal = {clave, pintar}; render(); }
+function cerrarModal(){ modal = null; render(); }
+
+/* ---------- elegir un ejercicio de la biblioteca ---------- */
+// patron limita la búsqueda (ej. solo cardio) y en ese caso lista todo sin escribir
+function screenElegir({titulo, subtitulo, sugeridas, etiquetaSugeridas, patron, onElegir, volver}){
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(volver));
+  if(subtitulo) wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:4px">${esc(subtitulo)}</p>`));
+  wrap.appendChild(el(`<h2 style="margin-bottom:12px">${esc(titulo)}</h2>`));
+  if(sugeridas && sugeridas.length){
+    wrap.appendChild(etiqueta(etiquetaSugeridas || 'Sugeridos'));
+    wrap.appendChild(grupo(...sugeridas.map(x=>filaEjercicio(x, ()=>onElegir(x), chevron()))));
+  }
+  wrap.appendChild(etiqueta('Buscar en la biblioteca'));
+  const buscador = el(`<input type="search" class="set-input" style="text-align:left;margin-bottom:8px" placeholder="Nombre, músculo o equipo" aria-label="Buscar ejercicio">`);
+  const resultados = el(`<div></div>`);
+  const pintar = ()=>{
+    resultados.innerHTML = '';
+    if(!patron && normalizarNombre(buscador.value).length < 2) return;
+    const lista = buscarEnBiblioteca(buscador.value, patron).filter(disponible);
+    if(!lista.length){ resultados.appendChild(el(`<p class="secondary" style="font-size:13px">No encontré nada con eso.</p>`)); return; }
+    resultados.appendChild(grupo(...lista.slice(0, 20).map(x=>filaEjercicio(x, ()=>onElegir(x), chevron()))));
+  };
+  buscador.oninput = pintar;
+  wrap.appendChild(buscador);
+  wrap.appendChild(resultados);
+  pintar();
+  return wrap;
+}
+
+/* ---------- revisar lo pegado contra la biblioteca ---------- */
+const PALABRAS_VACIAS = new Set(['de','del','con','en','la','el','los','las','a','al','y','para','sobre']);
+function palabras(s){ return normalizarNombre(s).split(' ').filter(t=>t && !PALABRAS_VACIAS.has(t)); }
+function distancia(a, b){
+  let prev = Array.from({length: b.length+1}, (_, j)=>j);
+  for(let i=1; i<=a.length; i++){
+    const cur = [i];
+    for(let j=1; j<=b.length; j++) cur[j] = Math.min(prev[j]+1, cur[j-1]+1, prev[j-1] + (a[i-1]===b[j-1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// misma palabra, una abreviatura de la otra ("inclin"/"inclinado") o con un error de tipeo
+function palabrasParecidas(a, b){
+  if(a===b) return true;
+  if(a.length < 4 || b.length < 4) return false;
+  return a.startsWith(b) || b.startsWith(a) || distancia(a, b) <= 1;
+}
+function similitud(a, b){
+  const A = palabras(a), B = palabras(b);
+  const comunes = A.filter(t=>B.some(u=>palabrasParecidas(t, u))).length;
+  return comunes ? comunes / (A.length + B.length - comunes) : 0;
+}
+function parecidos(nombre, cantidad){
+  return bibliotecaCompleta().filter(disponible)
+    .map(x=>({x, p: Math.max(...[x.nombre, ...x.alias].map(a=>similitud(nombre, a)))}))
+    .filter(o=>o.p > 0)
+    .sort((a,b)=>b.p - a.p)
+    .slice(0, cantidad)
+    .map(o=>o.x);
+}
+function problemaDe(e){
+  if(e.cardio) return null;
+  const x = buscarEjercicio(e.nombre);
+  if(!x) return 'desconocido';
+  return disponible(x) ? null : 'noDisponible';
+}
+function renombrarEjercicio(e, x, tarde){
+  e.nombre = x.nombre;
+  ponerMedida(e, medidaPara(x, tarde, e.medida));
+}
+
+let revision = null;   // {titulo, grupos:[{nombre, ejercicios}], tarde, texto:{id, valor}, guardar, dejados}
+function pendientesRevision(r){
+  return r.grupos.flatMap(g=>g.ejercicios.filter(e=>problemaDe(e) && !r.dejados.has(e)).map(e=>({g, e})));
+}
+// si todo está en la biblioteca guarda directo; si no, muestra qué revisar antes de guardar
+function revisarYGuardar(r){
+  revision = {...r, dejados: new Set()};
+  if(!pendientesRevision(revision).length) terminarRevision();
+  else abrirModal('revision', screenRevision);
+}
+function terminarRevision(){
+  const r = revision;
+  revision = null;
+  modal = null;
+  r.guardar();
+}
+function volverARevision(){ abrirModal('revision', screenRevision); }
+function screenRevision(){
+  const r = revision;
+  const pend = pendientesRevision(r);
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{
+    revision = null;
+    cerrarModal();
+    const t = document.getElementById(r.texto.id);   // devuelve lo pegado para corregirlo
+    if(t) t.value = r.texto.valor;
+  }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">${esc(r.titulo)}</h2>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">${pend.length ? `${pend.length} ejercicio${pend.length===1?'':'s'} para revisar. Los demás están en la biblioteca.` : 'Todo revisado.'}</p>`));
+  let grupoActual = null;
+  pend.forEach(({g, e})=>{
+    if(r.grupos.length > 1 && g!==grupoActual){ wrap.appendChild(etiqueta(g.nombre)); grupoActual = g; }
+    wrap.appendChild(tarjetaRevision(r, g, e));
+  });
+  wrap.appendChild(boton(pend.length ? 'Guardar así' : 'Guardar', 'btn-primary btn-full', terminarRevision));
+  wrap.lastChild.style.marginTop = '12px';
+  return wrap;
+}
+function tarjetaRevision(r, g, e){
+  const tipo = problemaDe(e);
+  const card = el(`<div class="alt-card"><div><p style="font-weight:600">${esc(e.nombre)}</p><p class="secondary" style="font-size:13px">${tipo==='desconocido' ? 'No lo encuentro en la biblioteca.' : 'Marcaste que no hay en tu gimnasio.'}</p></div></div>`);
+  const elegir = x=>{ renombrarEjercicio(e, x, r.tarde); volverARevision(); };
+  const opciones = tipo==='desconocido' ? parecidos(e.nombre, 3) : sugerenciasReemplazo(e.nombre, g.ejercicios.map(y=>y.nombre)).slice(0, 3);
+  if(opciones.length){
+    card.appendChild(el(`<p class="muted" style="font-size:12px">${tipo==='desconocido' ? '¿Es alguno de estos?' : 'Podés cambiarlo por:'}</p>`));
+    card.appendChild(grupo(...opciones.map(x=>filaEjercicio(x, ()=>elegir(x), chevron()))));
+  }
+  const botones = el(`<div class="fila2"></div>`);
+  botones.appendChild(boton('Buscar otro', 'btn-sm btn-full', ()=>abrirModal('elegir', ()=>screenElegir({
+    titulo: e.nombre, subtitulo: 'Reemplazar por', onElegir: elegir, volver: volverARevision}))));
+  if(tipo==='desconocido') botones.appendChild(boton('Es propio', 'btn-sm btn-full', ()=>abrirModal('nuevo', ()=>screenNuevoEjercicio({
+    nombre: e.nombre, volver: volverARevision, alGuardar: elegir}))));
+  card.appendChild(botones);
+  card.appendChild(boton('Dejarlo así', 'btn-sm btn-ghost', ()=>{ r.dejados.add(e); render(); }));
+  return card;
+}
+
+/* ---------- editor visual de un día o del turno tarde ---------- */
+let editor = null;   // {tipo:'dia'|'tarde', idx, abierto: índice con los datos desplegados, texto: editar como texto}
+function abrirEditor(tipo, idx){ editor = {tipo, idx, abierto: null, texto: false}; render(); }
+function rutinaEditada(){ return editor.tipo==='tarde' ? state.routineTarde : state.routine.days[editor.idx]; }
+function guardarEditor(){ modal = null; saveState(); render(); }
+// el nombre del día es parte de la clave de "lo que hiciste la última vez": se mueve con él
+function renombrarDia(dia, nuevo){
+  nuevo = String(nuevo).trim();
+  if(!nuevo || nuevo===dia.name) return;
+  const m = state.lastSetsByDayExercise || {};
+  Object.keys(m).filter(k=>k.startsWith(dia.name + '::')).forEach(k=>{
+    const nk = nuevo + k.slice(dia.name.length);
+    if(!(nk in m)) m[nk] = m[k];
+    delete m[k];
+  });
+  dia.name = nuevo;
+}
+const NOMBRES_MEDIDA = [['kg+reps','Kg y repeticiones'],['reps','Repeticiones'],['seg','Segundos'],['kg+seg','Kg y segundos'],['kg+m','Kg y metros']];
+const CAMPOS_EDITOR = [['series','Series'],['descanso','Descanso (seg)'],['repsMin','Reps mín'],['repsMax','Reps máx'],['calentamiento','Calentamiento'],['aproximacion','Aproximación']];
+function normalizarReps(e){
+  if(e.repsMin && e.repsMax){ if(e.repsMin > e.repsMax) [e.repsMin, e.repsMax] = [e.repsMax, e.repsMin]; return; }
+  const v = e.repsMin || e.repsMax || null;
+  e.repsMin = v; e.repsMax = v;
+}
+// se guarda al salir de cada campo sin redibujar, para no cerrar el teclado
+function formDatos(e, tarde){
+  const form = el(`<div class="fila2"></div>`);
+  const inputs = {};
+  CAMPOS_EDITOR.forEach(([k, label])=>{
+    const c = el(`<div class="campo"><label>${label}</label><input type="number" inputmode="numeric" min="0" aria-label="${label}" value="${e[k]==null ? '' : e[k]}"></div>`);
+    const inp = inputs[k] = c.querySelector('input');
+    inp.onchange = ()=>{
+      const v = inp.value==='' ? null : Math.max(0, parseInt(inp.value, 10) || 0);
+      if(k==='repsMin' || k==='repsMax'){
+        e[k] = v;
+        normalizarReps(e);
+        inputs.repsMin.value = e.repsMin ?? '';
+        inputs.repsMax.value = e.repsMax ?? '';
+      } else {
+        e[k] = k==='series' ? Math.max(1, v || 1) : (v || 0);
+        inp.value = e[k];
+      }
+      saveState();
+    };
+    form.appendChild(c);
+  });
+  const actual = e.medida || (tarde ? 'reps' : 'kg+reps');
+  const medida = el(`<div class="campo" style="grid-column:1/-1"><label>Se mide en</label><select aria-label="Se mide en">${NOMBRES_MEDIDA.map(([v,t])=>`<option value="${v}" ${v===actual?'selected':''}>${t}</option>`).join('')}</select></div>`);
+  medida.querySelector('select').onchange = (ev)=>{ ponerMedida(e, !tarde && ev.target.value==='kg+reps' ? undefined : ev.target.value); saveState(); };
+  form.appendChild(medida);
+  return form;
+}
+function botonIcono(nombre, label, onClick, deshabilitado){
+  const b = boton(icon(nombre), 'btn-sm', onClick);
+  b.setAttribute('aria-label', label);
+  b.disabled = !!deshabilitado;
+  return b;
+}
+function cambiarEnEditor(rut, e, tarde){
+  abrirModal('elegir', ()=>screenElegir({
+    titulo: e.nombre, subtitulo: 'Cambiar', patron: e.cardio ? 'cardio' : '',
+    sugeridas: e.cardio ? [] : sugerenciasReemplazo(e.nombre, rut.exercises.map(y=>y.nombre)), etiquetaSugeridas: 'Parecidos',
+    onElegir: x=>{ if(e.cardio) e.nombre = x.nombre; else renombrarEjercicio(e, x, tarde); guardarEditor(); },
+    volver: cerrarModal}));
+}
+function agregarAlEditor(x, cardio){
+  const rut = rutinaEditada();
+  const tarde = editor.tipo==='tarde';
+  const e = cardio ? {nombre: x.nombre, cardio: true} : {nombre: x.nombre, ...DEF_MANANA, alternativas: []};
+  if(!cardio) ponerMedida(e, medidaPara(x, tarde, tarde ? DEF_TARDE.medida : undefined));
+  rut.exercises.push(e);
+  editor.abierto = cardio ? null : rut.exercises.length - 1;
+  guardarEditor();
+}
+function tarjetaEditor(rut, e, i, tarde){
+  const x = buscarEjercicio(e.nombre);
+  let aviso = '';
+  if(!e.cardio && !x) aviso = ' · no está en la biblioteca';
+  else if(x && !disponible(x)) aviso = ' · no hay en tu gimnasio';
+  const card = el(`<div class="alt-card" style="margin:0"></div>`);
+  const fila = itemFila({iconoHtml: x ? miniaturaEjercicio(x, 44) : `<span class="miniatura" style="width:44px;height:44px">${icon(e.cardio ? 'run' : 'photo')}</span>`,
+    titulo: e.nombre, sub: (e.cardio ? 'Cardio' : detalleEjercicio(e)) + aviso});
+  fila.style.cssText = 'padding:0;border:none;min-height:0';
+  card.appendChild(fila);
+  const mover = (d)=>{
+    const lista = rut.exercises;
+    [lista[i], lista[i+d]] = [lista[i+d], lista[i]];
+    editor.abierto = null;
+    guardarEditor();
+  };
+  const quitar = ()=>{
+    if(rut.exercises.length===1){ alert('Tiene que quedar al menos un ejercicio.'); return; }
+    if(!confirm(`¿Quitar "${e.nombre}"?`)) return;
+    rut.exercises.splice(i, 1);
+    editor.abierto = null;
+    guardarEditor();
+  };
+  const acciones = el(`<div class="acciones-editor"></div>`);
+  if(!e.cardio) acciones.appendChild(boton(`${icon('edit')} Datos`, 'btn-sm', ()=>{ editor.abierto = editor.abierto===i ? null : i; render(); }));
+  acciones.appendChild(boton(`${icon('swap')} Cambiar`, 'btn-sm', ()=>cambiarEnEditor(rut, e, tarde)));
+  acciones.appendChild(botonIcono('arrowup', 'Subir', ()=>mover(-1), i===0));
+  acciones.appendChild(botonIcono('arrowdown', 'Bajar', ()=>mover(1), i===rut.exercises.length-1));
+  acciones.appendChild(botonIcono('trash', 'Quitar', quitar));
+  card.appendChild(acciones);
+  if(editor.abierto===i) card.appendChild(formDatos(e, tarde));
+  return card;
+}
+function screenEditor(){
+  if(editor.texto) return screenEditorTexto();
+  const tarde = editor.tipo==='tarde';
+  const rut = rutinaEditada();
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ editor = null; render(); }));
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">${tarde ? 'TURNO TARDE' : `DÍA ${editor.idx+1}`}</p>`));
+  const nombre = el(`<input type="text" class="set-input" style="text-align:left;font-size:20px;font-weight:600;margin-bottom:12px" aria-label="Nombre del día" value="${esc(rut.name)}">`);
+  nombre.onchange = ()=>{
+    if(!tarde) renombrarDia(rut, nombre.value);
+    else if(nombre.value.trim()) rut.name = nombre.value.trim();
+    nombre.value = rut.name;
+    saveState();
+  };
+  wrap.appendChild(nombre);
+  const lista = el(`<div class="pila" style="gap:8px"></div>`);
+  rut.exercises.forEach((e, i)=>lista.appendChild(tarjetaEditor(rut, e, i, tarde)));
+  wrap.appendChild(lista);
+  const agregar = el(`<div class="${tarde ? 'fila2' : ''}" style="margin-top:12px"></div>`);
+  agregar.appendChild(boton(`${icon('plus')} Agregar ejercicio`, 'btn-dashed btn-full', ()=>abrirModal('elegir', ()=>screenElegir({
+    titulo: 'Agregar ejercicio', subtitulo: rut.name, onElegir: x=>agregarAlEditor(x, false), volver: cerrarModal}))));
+  if(tarde) agregar.appendChild(boton(`${icon('run')} Agregar cardio`, 'btn-dashed btn-full', ()=>abrirModal('elegir', ()=>screenElegir({
+    titulo: 'Agregar cardio', subtitulo: rut.name, patron: 'cardio', onElegir: x=>agregarAlEditor(x, true), volver: cerrarModal}))));
+  wrap.appendChild(agregar);
+  wrap.appendChild(boton(`${icon('edit')} Editar como texto`, 'btn-ghost btn-full', ()=>{ editor.texto = true; render(); }));
+  return wrap;
+}
+function screenEditorTexto(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ editor.texto = false; render(); }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Editar como texto</h2>`));
+  if(editor.tipo==='tarde'){ wrap.appendChild(contenidoEditarTarde()); return wrap; }
+  const idx = editor.idx;
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">Para pegar lo que te pase el Project.</p>`));
+  const ta = el(`<textarea id="daypaste" aria-label="Día en texto">${esc(diaToText(state.routine.days[idx], idx))}</textarea>`);
+  wrap.appendChild(ta);
+  wrap.appendChild(boton('Guardar cambios de este día', 'btn-primary btn-full', ()=>{
+    const parsed = parseRoutine(ta.value);
+    if(!parsed.days.length){ alert('No se pudo leer el día. Revisá el formato.'); return; }
+    const dia = parsed.days[0];
+    revisarYGuardar({titulo: 'Revisar día', grupos: [{nombre: dia.name, ejercicios: dia.exercises}], tarde: false, texto: {id: 'daypaste', valor: ta.value},
+      guardar: ()=>{
+        const nombreNuevo = dia.name;
+        dia.name = state.routine.days[idx].name;
+        renombrarDia(dia, nombreNuevo);
+        state.routine.days[idx] = dia;
+        editor = null;
+        saveState(); render();
+      }});
+  }));
+  wrap.lastChild.style.marginTop = '12px';
   return wrap;
 }
 
