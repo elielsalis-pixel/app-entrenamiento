@@ -35,6 +35,22 @@ PATRONES = {'empuje_h':'Empuje horizontal','empuje_v':'Empuje vertical','tiron_h
  'hombro_front':'Hombro frontal','trapecio':'Trapecio','biceps':'Bíceps','triceps':'Tríceps','gemelos':'Gemelos','antebrazo':'Antebrazo',
  'core_flex':'Core: flexión','core_anti':'Core: estabilidad','core_rot':'Core: rotación y lateral','carga':'Cargas y agarre','potencia':'Potencia','pliometria':'Pliometría','cardio':'Cardio'}
 
+# Correcciones al dataset: músculos mal cargados en free-exercise-db o que no coinciden con el patrón.
+# id -> (principal, secundarios o None para dejar los del dataset)
+CORRECCIONES = {
+ 'Cable_Hip_Adduction': (['Aductores'], None),                      # el dataset dice cuádriceps
+ 'Cable_Deadlifts': (['Isquiotibiales','Glúteos'], ['Zona lumbar']),  # el dataset dice cuádriceps
+ 'Leverage_Deadlift': (['Isquiotibiales','Glúteos'], ['Zona lumbar','Cuádriceps']),
+ 'Trap_Bar_Deadlift': (['Cuádriceps','Glúteos'], ['Isquiotibiales','Zona lumbar']),
+ 'Standing_Dumbbell_Upright_Row': (['Hombros','Trapecios'], None),
+ 'Upright_Cable_Row': (['Hombros','Trapecios'], None),
+ 'Smith_Machine_Upright_Row': (['Hombros','Trapecios'], None),
+ 'Mountain_Climbers': (['Abdominales'], ['Cuádriceps','Hombros']),
+ 'Flutter_Kicks': (['Abdominales'], ['Glúteos']),
+ 'Push_Up_to_Side_Plank': (['Abdominales','Pecho'], ['Hombros','Tríceps']),
+ 'Bent-Arm_Barbell_Pullover': (['Pecho','Dorsales'], ['Tríceps']),
+}
+
 base = {x['id']: x for x in json.load(open(os.path.join(FDB, 'dist', 'exercises.json')))}
 out = []
 for (bid, nombre, patron, lumbar, medida, alias, svg) in L:
@@ -44,10 +60,14 @@ for (bid, nombre, patron, lumbar, medida, alias, svg) in L:
         equipo = EQ[x['equipment']]; nivel = NIV[x['level']]; tipo = TIPO_PATRON.get(patron, CAT[x['category']])
         mec = {'compound':'Compuesto','isolation':'Aislamiento'}.get(x['mechanic'], '')
         fotos = [f'ejercicios/fdb/{i}' for i in x['images']]; eid = bid
+        if bid in CORRECCIONES:
+            principal, s2 = CORRECCIONES[bid]
+            if s2 is not None: sec = s2
     else:
         principal, sec, equipo = PROPIOS[nombre]; nivel = 'Principiante'; tipo = TIPO_PATRON.get(patron, 'Fuerza e hipertrofia'); mec = ''; fotos = []
         eid = 'base-' + norm(nombre).replace(' ', '-')
     if equipo == 'Máquina' and 'Smith' in nombre: equipo = 'Smith'
+    sec = [m for m in sec if m not in principal]   # un músculo no cuenta a la vez como principal y secundario
     rec = {'id':eid,'nombre':nombre,'alias':sorted({norm(nombre)} | {norm(a) for a in alias}),'patron':patron,'principal':principal,'secundarios':sec,
            'equipo':equipo,'tipo':tipo,'nivel':nivel,'lumbar':lumbar,'medida':medida or ('reps' if equipo == 'Peso corporal' else 'kg+reps'),'mecanica':mec,'fotos':fotos}
     if svg: rec['ilustracion'] = 'ejercicios/' + svg

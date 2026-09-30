@@ -407,7 +407,7 @@ L += [
 ("Hyperextensions_With_No_Hyperextension_Bench","Extensión lumbar sin banco","bisagra","media","reps",[],None),
 ("Stiff_Leg_Barbell_Good_Morning","Buenos días piernas rígidas","bisagra","alta",None,[],None),
 ("Seated_Good_Mornings","Buenos días sentado","bisagra","alta",None,[],None),
-("Smith_Machine_Hip_Raise","Elevación de cadera en Smith","gluteo","baja",None,[],None),
+("Smith_Machine_Hip_Raise","Crunch inverso en Smith (pies en la barra)","core_flex","baja",None,[],None),
 ("Kettlebell_Dead_Clean","Cargada desde el piso con kettlebell","potencia","media",None,[],None),
 ("Standing_Barbell_Calf_Raise","Gemelos de pie con barra","gemelos","media",None,[],None),
 ("Barbell_Seated_Calf_Raise","Gemelos sentado con barra","gemelos","baja",None,[],None),
