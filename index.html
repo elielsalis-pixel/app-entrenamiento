@@ -704,7 +704,6 @@ function diaToText(day, idx){ return [`DIA ${idx+1}: ${day.name}`, ...ejercicios
 
 /* ---------- pantalla: sesión ---------- */
 // sessionView (activa | sustituir | resumen) ya declarado arriba, junto a currentTab
-let sustEjIdx = null;
 
 function ejercicioDeSesion(e, clave, usarGeneral){
   if(e.cardio) return {nombre:e.nombre, cardio:true, cardioData:nuevoCardio(e), cardioHecho:false, sets:[], alternativas:[]};
@@ -853,10 +852,9 @@ function screenDiscos(){
 }
 
 /* ---------- notas por ejercicio ---------- */
-let notasEjIdx = null;
 function screenNotas(){
   const ses = state.activeSession;
-  const ej = ses.exercises[notasEjIdx];
+  const ej = ses.exercises[ses.focusIdx];   // el ejercicio en pantalla: se guarda con la sesión y sobrevive a una recarga
   const wrap = document.createElement('div');
   wrap.appendChild(botonVolver(()=>{ setSessionView('activa'); render(); }));
   wrap.appendChild(el(`<h2 style="margin-bottom:12px">Notas: ${esc(ej.nombre)}</h2>`));
@@ -1389,7 +1387,31 @@ function claveVista(){
   const s = state.activeSession;
   return [currentTab, sessionView, s ? s.focusIdx : '', editor ? editor.tipo + editor.idx + editor.texto : '', modal ? modal.clave : '', rutinaVista, rutinaSub, bibDetalle, ajustesVista, histVista, JSON.stringify(histDetalle), extraVista].join('|');
 }
+// Si una pantalla falla al dibujarse, nunca queda en blanco: se avisa y se ofrece salir sin perder nada.
 function render(){
+  try{ dibujar(); }
+  catch(err){
+    pantallaDeError(err);
+    setTimeout(()=>{ throw err; });   // el error sigue visible para las pruebas y la consola
+  }
+}
+function pantallaDeError(err){
+  const s = document.getElementById('screen');
+  s.innerHTML = '';
+  const wrap = el(`<div style="padding-top:24px"><h2 style="margin-bottom:8px">Esta pantalla falló</h2>
+    <p class="secondary" style="font-size:14px;margin-bottom:6px">Tus datos siguen guardados. <b>No borres los datos de navegación</b>: eso sí los elimina.</p>
+    <p class="muted" style="font-size:12px;margin-bottom:16px">Detalle para avisar: ${esc(err && err.message || String(err))}</p></div>`);
+  wrap.appendChild(boton('Volver al inicio', 'btn-primary btn-full', ()=>{
+    modal = null; revision = null; editor = null; rutinaSub = null; ajustesVista = null; histDetalle = null;
+    currentTab = 'inicio'; state.currentTab = 'inicio';
+    setSessionView('activa');
+    render();
+  }));
+  wrap.appendChild(el('<div style="height:10px"></div>'));
+  wrap.appendChild(boton(`${icon('down')} Descargar copia de seguridad`, 'btn-full', descargarCopia));
+  s.appendChild(wrap);
+}
+function dibujar(){
   renderTabbar();
   const s = document.getElementById('screen');
   s.innerHTML = '';
@@ -1446,6 +1468,12 @@ function screenInicio(){
   if(state.aviso){
     const b = el(`<button class="banner">${icon('wand')}<span>${esc(textoAviso(state.aviso))}</span></button>`);
     b.onclick = ()=>{ histVista='sesiones'; histDetalle=null; setTab('historial'); };
+    wrap.appendChild(b);
+  }
+  // el permiso de avisos es del navegador: se pierde si se borran los datos del sitio
+  if(window.Notification && Notification.permission==='default'){
+    const b = el(`<button class="banner banner-warn">${icon('bell')}<span style="flex:1">El aviso de fin de descanso está apagado en este celular.</span><b>Activar</b></button>`);
+    b.onclick = ()=>Notification.requestPermission().then(()=>render());
     wrap.appendChild(b);
   }
   const diasSinCopia = diasDesdeUltimaCopia();
@@ -1844,11 +1872,10 @@ function sesionEjercicio(ej){
   cab.appendChild(el(`<div style="flex:1;min-width:0"><h1 style="font-size:20px;line-height:1.2">${esc(ej.cardio ? 'Cardio · '+ej.nombre : ej.nombre)}</h1><p class="secondary" style="font-size:13px;margin-top:4px">${esc(meta)}</p></div>`));
   wrap.appendChild(cab);
   const acciones = el(`<div class="acciones" style="margin-bottom:10px"></div>`);
-  const idx = state.activeSession.focusIdx;
-  acciones.appendChild(boton(`${icon('edit')} Nota`, 'btn-sm', ()=>{ notasEjIdx = idx; setSessionView('notas'); render(); }));
+  acciones.appendChild(boton(`${icon('edit')} Nota`, 'btn-sm', ()=>{ setSessionView('notas'); render(); }));
   acciones.lastChild.setAttribute('aria-label', 'Notas del ejercicio');
   if(!ej.cardio){
-    acciones.appendChild(boton(`${icon('swap')} Cambiar`, 'btn-sm', ()=>{ sustEjIdx = idx; setSessionView('sustituir'); render(); }));
+    acciones.appendChild(boton(`${icon('swap')} Cambiar`, 'btn-sm', ()=>{ setSessionView('sustituir'); render(); }));
     acciones.appendChild(boton(`${icon('more')} Más`, 'btn-sm', ()=>{ setSessionView('mas'); render(); }));
   }
   wrap.appendChild(acciones);
@@ -2531,7 +2558,7 @@ function opcionSustituto(ej, nombre, detalle){
 }
 function screenSustituir(){
   const ses = state.activeSession;
-  const ej = ses.exercises[sustEjIdx];
+  const ej = ses.exercises[ses.focusIdx];
   const wrap = document.createElement('div');
   wrap.appendChild(botonVolver(()=>{ setSessionView('activa'); render(); }));
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:4px">Cambiar</p>`));

@@ -528,6 +528,30 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await ev(()=>{ Storage.prototype.setItem=function(){ throw new DOMException('x','QuotaExceededError'); }; saveState(); });
   ok('aviso si falla el guardado', await page.isVisible('#avisoGuardado'));
 
+  // --- volver de otra app: Android recarga la página con lo guardado; ninguna pantalla puede quedar en blanco
+  {
+    const pr = await ctx.newPage(); pr.on('dialog', d=>d.accept());
+    const errs=[]; pr.on('pageerror', e=>errs.push(e.message));
+    await pr.goto(URL);
+    await pr.evaluate(r=>{ localStorage.clear(); state.routine=parseRoutine(r); state.slot=0; state.activeSession=null; saveState(); }, RUTINA);
+    await pr.reload(); await pr.waitForTimeout(200);
+    for(const vista of ['sustituir','notas','foto','mas','discos']){
+      await pr.evaluate(v=>{ if(!state.activeSession) empezarSesion(0); setSessionView(v); render(); }, vista);
+      await pr.reload(); await pr.waitForTimeout(250);
+      ok(`recarga en sesión/${vista}: no queda en blanco`, !errs.length && await pr.evaluate(()=>document.getElementById('screen').children.length>0), errs.join(' | '));
+      errs.length=0;
+    }
+    ok('recarga en Cambiar: sigue en el mismo ejercicio', await pr.evaluate(()=>{ setSessionView('sustituir'); render(); return document.querySelector('#screen h2').textContent===state.activeSession.exercises[state.activeSession.focusIdx].nombre; }));
+    await pr.evaluate(()=>{ state.activeSession.focusIdx=99; saveState(); });
+    await pr.reload(); await pr.waitForTimeout(250);
+    ok('si una pantalla falla: aviso con salida, no pantalla en blanco', await pr.isVisible('text=Esta pantalla falló') && await pr.isVisible('text=Descargar copia de seguridad') && errs.length>0);
+    errs.length=0;
+    await pr.evaluate(()=>{ state.activeSession.focusIdx=0; saveState(); });
+    await pr.click('text=Volver al inicio');
+    ok('pantalla de error: Volver al inicio funciona', await pr.isVisible('text=Continuar sesión en curso') && !errs.length);
+    await pr.close();
+  }
+
   // --- rotación con 4 días y aviso de bloque
   ok('rotación y aviso según días de la rutina', await ev(()=>{
     state.routine={days:[1,2,3,4].map(i=>({name:'D'+i,exercises:[]}))}; state.slot=0; state.semana=1; state.plan=null; const nombres=[]; const avisos=[];
