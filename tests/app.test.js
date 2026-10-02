@@ -552,6 +552,86 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     await pr.close();
   }
 
+  // --- copia automática en la nube (con una nube simulada que vive fuera de los datos de la app)
+  {
+    const ctxN = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
+    await ctxN.addInitScript(()=>{
+      window.nubeFalsa = ()=>{
+        const todo = ()=>JSON.parse(localStorage.getItem('nubeFalsa')||'{}');
+        const guardar = t=>localStorage.setItem('nubeFalsa', JSON.stringify(t));
+        let aviso = ()=>{};
+        return {
+          alCambiarUsuario: fn=>{ aviso = fn; const u = localStorage.getItem('nubeFalsaUsuario'); setTimeout(()=>fn(u ? {uid:'u1', email:u} : null)); },
+          entrar: async()=>{ localStorage.setItem('nubeFalsaUsuario','eliel@prueba.com'); aviso({uid:'u1', email:'eliel@prueba.com'}); },
+          salir: async()=>{ localStorage.removeItem('nubeFalsaUsuario'); aviso(null); },
+          leer: async id=>todo()[id] || null,
+          escribir: async(id, d)=>{ if(window.cortarRed) throw new Error('sin red'); const x = todo(); x[id] = d; guardar(x); },
+          borrar: async id=>{ const x = todo(); delete x[id]; guardar(x); }
+        };
+      };
+    });
+    const pn = await ctxN.newPage(); pn.on('dialog', d=>d.accept());
+    const errN=[]; pn.on('pageerror', e=>errN.push(e.message));
+    const conNube = async()=>{ await pn.evaluate(()=>{ nube.adaptador = nubeFalsa(); iniciarNube(); }); await pn.waitForTimeout(250); };
+    const docs = ()=>pn.evaluate(()=>JSON.parse(localStorage.getItem('nubeFalsa')||'{}'));
+    const idsDe = (d, pre)=>Object.keys(d).filter(k=>k.startsWith(pre+'.'));
+    await pn.goto(URL);
+    await pn.evaluate(r=>{ localStorage.clear(); state.routine=parseRoutine(r); state.history=[{fecha:'2026-10-01T12:00:00Z',dayName:'Push',exercises:[{nombre:'Press banca plano',sets:[{peso:60,reps:10,tipo:'Normal',done:true}]}],duracionSeg:600}]; saveState(); setTab('ajustes'); }, RUTINA);
+    ok('nube: sin configurar no aparece', !(await pn.isVisible('text=Copia automática en la nube')));
+    await conNube(); await pn.evaluate(()=>render());
+    ok('nube: se ofrece activar', await pn.isVisible('text=Activar con Google'));
+    await pn.click('text=Activar con Google'); await pn.waitForTimeout(400);
+    let d = await docs();
+    ok('nube: al activar sube la copia, una semanal y los medios', !!d.indice && d.indice.actual.partes===idsDe(d,'actual').length && d.indice.semanales.length===1 && !!d.indice.media && await pn.evaluate(()=>nube.usuario.email==='eliel@prueba.com' && !nube.pendiente));
+    ok('nube: estado visible en Ajustes', await pn.isVisible('text=Cuenta: eliel@prueba.com') && (await pn.textContent('#estadoNube')).startsWith('Última subida'));
+    const selloAntes = d.indice.actual.sello;
+    await pn.waitForTimeout(5);
+    await pn.evaluate(()=>{ state.notasEjercicio={'Press banca plano':'ñ'.repeat(600000)}; saveState(); });
+    ok('nube: un cambio queda pendiente y programa la subida', await pn.evaluate(()=>nube.pendiente && nube.temporizador!==null && JSON.parse(localStorage.entrenoNube).pendiente));
+    await pn.evaluate(()=>subirANube());
+    d = await docs();
+    ok('nube: cada subida reemplaza a la anterior (no acumula)', d.indice.actual.sello!==selloAntes && idsDe(d,'actual').length===d.indice.actual.partes && idsDe(d,'actual').every(k=>k.includes(d.indice.actual.sello)) && d.indice.semanales.length===1);
+    ok('nube: una copia grande se parte en varios documentos', d.indice.actual.partes>=3 && idsDe(d,'actual').every(k=>d[k].t.length<=250000));
+    await pn.evaluate(()=>{ window.cortarRed=true; state.notasEjercicio={}; saveState(); return subirANube(); });
+    ok('nube: sin red avisa y queda pendiente', await pn.evaluate(()=>nube.error==='sin red' && nube.pendiente) && (await pn.textContent('#estadoNube')).includes('Error'));
+    const trasCorte = await docs();
+    ok('nube: una subida cortada no rompe la copia vigente', trasCorte.indice.actual.sello===d.indice.actual.sello && await pn.evaluate(async()=>JSON.parse(await leerPartes(nube.indice.actual)).notasEjercicio['Press banca plano'].length===600000));
+    await pn.evaluate(()=>{ window.cortarRed=false; return subirANube(); });
+    ok('nube: al volver la red sube lo pendiente', await pn.evaluate(()=>!nube.error && !nube.pendiente));
+    // copias semanales: se guardan las últimas 4
+    await pn.evaluate(()=>{ const x=JSON.parse(localStorage.nubeFalsa); Object.keys(x).filter(k=>k.startsWith('sem-')).forEach(k=>delete x[k]); x.indice.semanales=['2026-08-31','2026-09-07','2026-09-14','2026-09-21'].map(c=>{ x['sem-'+c+'.v.0']={t:'{}'}; return {clave:c, prefijo:'sem-'+c, sello:'v', partes:1, modificado:1}; }); localStorage.nubeFalsa=JSON.stringify(x); state.slot=state.slot; saveState(); return subirANube(); });
+    d = await docs();
+    ok('nube: quedan 4 copias semanales y se borra la más vieja', d.indice.semanales.length===4 && d.indice.semanales[0].clave==='2026-09-07' && !d['sem-2026-08-31.v.0'] && idsDe(d,'sem-'+d.indice.semanales[3].clave).length===d.indice.semanales[3].partes);
+    // se borran los datos del navegador: la app queda vacía, la nube no
+    const nubeAntes = JSON.stringify(d.indice.actual);
+    await pn.evaluate(()=>{ localStorage.removeItem('entrenoState'); localStorage.removeItem('entrenoNube'); localStorage.removeItem('nubeFalsaUsuario'); });
+    await pn.reload(); await pn.waitForTimeout(300); await conNube(); await pn.evaluate(()=>render());
+    ok('datos borrados: ofrece recuperar de la nube', await pn.isVisible('text=Cargá tu rutina') && await pn.isVisible('text=Recuperar mi copia de la nube'));
+    await pn.click('text=Recuperar mi copia de la nube'); await pn.waitForTimeout(400);
+    ok('datos borrados: muestra la copia encontrada', await pn.isVisible('text=Encontré una copia tuya en la nube') && await pn.isVisible('text=Copia actual'));
+    await pn.evaluate(()=>{ saveState(); return subirANube(); });
+    ok('datos borrados: la app vacía nunca pisa la copia', JSON.stringify((await docs()).indice.actual)===nubeAntes);
+    await pn.locator('.item:has-text("Copia actual") button:has-text("Restaurar")').click();
+    await pn.waitForLoadState('load'); await pn.waitForTimeout(400); await conNube();
+    ok('datos borrados: restaurar devuelve todo', await pn.evaluate(()=>state.routine.days.length===5 && state.history.length===1 && state.history[0].exercises[0].sets[0].peso===60));
+    ok('tras restaurar: sigue activa, sin nada pendiente ni preguntas', await pn.evaluate(()=>nube.activa && !!nube.usuario && !nube.pendiente && !nube.ofrecer));
+    // la nube tiene una copia que este celular no conoce: no se pisa sin preguntar
+    await pn.evaluate(()=>{ nube.activa=false; const a=JSON.parse(localStorage.entrenoNube); a.base=123; a.pendiente=false; localStorage.entrenoNube=JSON.stringify(a); const s=JSON.parse(localStorage.entrenoState); s.currentTab='inicio'; localStorage.entrenoState=JSON.stringify(s); });
+    await pn.reload(); await pn.waitForTimeout(300); await conNube();
+    ok('copia desconocida en la nube: aviso en Inicio', await pn.isVisible('text=Hay una copia en la nube que no salió de este celular'));
+    const antesDePreguntar = JSON.stringify((await docs()).indice.actual);
+    await pn.evaluate(()=>{ saveState(); return subirANube(); });
+    ok('copia desconocida: no se pisa hasta decidir', JSON.stringify((await docs()).indice.actual)===antesDePreguntar);
+    await pn.click('text=Revisar');
+    await pn.click('text=Quedarme con lo de este celular'); await pn.waitForTimeout(400);
+    ok('copia desconocida: al elegir este celular, sube', await pn.evaluate(()=>!nube.ofrecer && !nube.pendiente) && JSON.stringify((await docs()).indice.actual)!==antesDePreguntar);
+    await pn.evaluate(()=>setTab('ajustes'));
+    await pn.click('text=Apagar la copia automática'); await pn.waitForTimeout(200);
+    ok('nube: apagar deja de subir', await pn.evaluate(()=>{ nube.pendiente=false; saveState(); return !nube.activa && !nube.usuario && !nube.pendiente && !JSON.parse(localStorage.entrenoNube).activa; }) && await pn.isVisible('text=Activar con Google'));
+    ok('nube: sin errores de JavaScript', !errN.length, errN.join(' | '));
+    await ctxN.close();
+  }
+
   // --- rotación con 4 días y aviso de bloque
   ok('rotación y aviso según días de la rutina', await ev(()=>{
     state.routine={days:[1,2,3,4].map(i=>({name:'D'+i,exercises:[]}))}; state.slot=0; state.semana=1; state.plan=null; const nombres=[]; const avisos=[];

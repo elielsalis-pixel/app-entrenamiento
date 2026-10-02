@@ -194,9 +194,27 @@ let state = loadState();
 // claves de funciones que ya no existen (Diagnóstico, plantilla de rutina extra)
 ['mostrarDiagnostico','mostrarLog','rutinaExtra'].forEach(k=>{ delete state[k]; });
 let avisoGuardadoMostrado = false;
+
+// Estado de la copia automática en la nube (la lógica está más abajo; se declara acá porque cada guardado la consulta).
+// En la base hay un "indice" que dice dónde está cada copia: {actual, media, semanales:[...]}.
+// Cada copia es una referencia {prefijo, sello, partes, modificado} a documentos "prefijo.sello.N" con el texto partido.
+const nube = {
+  adaptador: null,    // acceso a la base (Firebase)
+  activa: false,      // el usuario prendió la copia automática en este celular
+  usuario: null,      // {uid, email} con sesión iniciada
+  indice: undefined,  // último índice leído de la base (undefined: todavía no se leyó; null: no hay copias)
+  ofrecer: false,     // en la nube hay una copia que este celular no conoce: se pregunta antes de pisar nada
+  pendiente: false,   // hay cambios sin subir
+  sucio: false,       // hubo cambios mientras se subía
+  subiendo: false,
+  error: '',
+  temporizador: null
+};
 function saveState(){
   try{
+    state.modificado = Date.now();
     localStorage.setItem('entrenoState', JSON.stringify(state));
+    avisarCambioANube();
     if(avisoGuardadoMostrado){ avisoGuardadoMostrado = false; const b=document.getElementById('avisoGuardado'); if(b) b.remove(); }
   } catch(e){
     if(!avisoGuardadoMostrado){
@@ -213,6 +231,7 @@ function saveState(){
 /* ---------- fotos y audios: IndexedDB (sin el límite de ~5MB del almacenamiento común) ---------- */
 const media = { images: {}, sounds: [] };   // images: nombreEjercicio -> dataURL ; sounds: [{id,name,data}]
 let mediaDB = null;
+let mediaCargada = false;   // recién ahí se sabe qué fotos y audios hay para subir a la nube
 function abrirMediaDB(){
   return new Promise((res, rej)=>{
     const req = indexedDB.open('entrenoMedia', 1);
@@ -265,6 +284,7 @@ async function iniciarMedia(){
     }
     if(migrado) saveState();
     cargarMediaEnMemoria(await mediaLeerTodo());
+    mediaCargada = true;
     render();
   } catch(e){ /* sin IndexedDB: la app sigue funcionando sin fotos/audios propios */ }
 }
@@ -1453,6 +1473,12 @@ function screenSinRutina(){
   wrap.appendChild(bloqueCargaRutina('Cargar rutina', cargarRutina));
   wrap.appendChild(el(`<p class="muted" style="font-size:13px;margin:24px 0 8px">¿Ya usabas la app y tenés una copia de seguridad?</p>`));
   wrap.appendChild(botonRestaurar());
+  if(nubeDisponible()){
+    wrap.appendChild(el('<div style="height:10px"></div>'));
+    wrap.appendChild(boton('Recuperar mi copia de la nube (Google)', 'btn-primary btn-full', activarNube));
+    if(nube.error) wrap.appendChild(el(`<p style="font-size:13px;color:var(--danger);margin-top:8px">${esc(nube.error)}</p>`));
+    else if(nube.activa && nube.usuario && nube.indice!==undefined && !nube.ofrecer) wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-top:8px">No hay copias en la nube para ${esc(nube.usuario.email)}.</p>`));
+  }
   return wrap;
 }
 
@@ -1476,8 +1502,14 @@ function screenInicio(){
     b.onclick = ()=>Notification.requestPermission().then(()=>render());
     wrap.appendChild(b);
   }
+  if(nube.ofrecer){
+    const b = el(`<button class="banner banner-warn">${icon('shield')}<span style="flex:1">Hay una copia en la nube que no salió de este celular.</span><b>Revisar</b></button>`);
+    b.onclick = ()=>abrirModal('nube', screenCopiasNube);
+    wrap.appendChild(b);
+  }
   const diasSinCopia = diasDesdeUltimaCopia();
-  if(state.history.length && (diasSinCopia===null || diasSinCopia>=14)){
+  const nubeAlDia = nube.activa && Date.now() - (ajustesNube().ultimaSubida || 0) < 3*86400000;
+  if(state.history.length && !nubeAlDia && (diasSinCopia===null || diasSinCopia>=14)){
     const b = el(`<button class="banner banner-warn">${icon('shield')}<span style="flex:1">${diasSinCopia===null?'Todavía no hiciste una copia de seguridad.':`Hace ${diasSinCopia} días que no hacés una copia de seguridad.`}</span><b>Hacer</b></button>`);
     b.onclick = ()=>{ ajustesVista=null; setTab('ajustes'); };
     wrap.appendChild(b);
@@ -1712,7 +1744,7 @@ function screenAjustes(){
   filaCopia.appendChild(boton(`${icon('down')} Descargar`, 'btn-full', descargarCopia));
   filaCopia.appendChild(botonRestaurar());
   copia.appendChild(filaCopia);
-  wrap.appendChild(grupo(copia));
+  wrap.appendChild(nubeDisponible() ? grupo(copia, bloqueNube()) : grupo(copia));
 
   wrap.appendChild(etiqueta('Durante el descanso'));
   const permiso = window.Notification ? Notification.permission : 'unsupported';
@@ -2259,7 +2291,8 @@ const SUELTOS = {
   abdominales: {icono:'flame', titulo:'abdominales', etiqueta:'Abdominales', defEj:'Crunch', ultimo:'ultimoEjercicioAbs', unidades:['reps','seg','kg'], unidad:'reps', agregar:'Agregar serie', ejemplo:'Crunch, plancha, elevación de piernas, etc.', nota:'Ej: 3 ejercicios distintos, circuito'}
 };
 // fecha local (Argentina) para inputs y registros: evita que el día se corra por la diferencia con UTC
-function hoyISO(){ const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function fechaISO(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function hoyISO(){ return fechaISO(new Date()); }
 function fechaDeInput(v){ return new Date((v || hoyISO()) + 'T12:00:00').toISOString(); }
 function cardioDe(a){ return a.cardioData || {maquina:a.modalidad, duracion:a.duracionMin, medicionTipo:a.medicionTipo, medicionValor:a.medicionValor}; }
 function lineaSuelto(a){
@@ -3107,10 +3140,234 @@ function mostrarCierre(ejs){
   cierreIntervalo = setInterval(()=>{ quedan--; if(quedan<=0) accion(); else pintar(); }, 1000);
 }
 
+/* ---------- copia automática en la nube (Firebase) ---------- */
+// Identificador público del proyecto de Firebase. Lo que protege los datos son las reglas de la base:
+// solo la cuenta dueña puede leer o escribir bajo usuarios/{uid}.
+const FIREBASE_CONFIG = null;
+const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
+const TROZO = 250000;        // caracteres por documento: bajo el tope de 1 MiB de Firestore aun con tildes
+const COPIAS_SEMANALES = 4;
+const ESPERA_SUBIDA = 8000;  // ms sin cambios antes de subir
+
+function nubeDisponible(){ return !!(FIREBASE_CONFIG || nube.adaptador); }
+function ajustesNube(){
+  try{ return JSON.parse(localStorage.getItem('entrenoNube')) || {}; }
+  catch(e){ return {}; }   // ajustes ilegibles: se arranca con la copia apagada y el usuario la vuelve a prender
+}
+function guardarAjustesNube(cambios){ localStorage.setItem('entrenoNube', JSON.stringify({...ajustesNube(), ...cambios})); }
+function appVacia(s){ return !s.routine && !(s.history||[]).length && !(s.historyTarde||[]).length; }
+
+async function adaptadorFirebase(){
+  const [app, auth, fs] = await Promise.all(['app','auth','firestore'].map(m=>import(`${FIREBASE_SDK}firebase-${m}.js`)));
+  const fb = app.initializeApp(FIREBASE_CONFIG);
+  const a = auth.getAuth(fb), db = fs.getFirestore(fb);
+  const ref = id=>fs.doc(db, 'usuarios', a.currentUser.uid, 'datos', id);
+  return {
+    alCambiarUsuario: fn=>auth.onAuthStateChanged(a, u=>fn(u ? {uid: u.uid, email: u.email} : null)),
+    entrar: ()=>auth.signInWithPopup(a, new auth.GoogleAuthProvider()),
+    salir: ()=>auth.signOut(a),
+    leer: async id=>{ const d = await fs.getDoc(ref(id)); return d.exists() ? d.data() : null; },
+    escribir: (id, datos)=>fs.setDoc(ref(id), datos),
+    borrar: id=>fs.deleteDoc(ref(id))
+  };
+}
+async function escribirPartes(prefijo, texto, modificado){
+  const sello = Date.now().toString(36);
+  let partes = 0;
+  for(let i=0; i<texto.length; i+=TROZO) await nube.adaptador.escribir(`${prefijo}.${sello}.${partes++}`, {t: texto.slice(i, i+TROZO)});
+  return {prefijo, sello, partes, modificado};
+}
+async function leerPartes(ref){
+  let texto = '';
+  for(let i=0; i<ref.partes; i++){
+    const d = await nube.adaptador.leer(`${ref.prefijo}.${ref.sello}.${i}`);
+    if(!d) throw new Error('La copia en la nube está incompleta.');
+    texto += d.t;
+  }
+  return texto;
+}
+async function borrarPartes(ref){
+  for(let i=0; i<ref.partes; i++) await nube.adaptador.borrar(`${ref.prefijo}.${ref.sello}.${i}`);
+}
+function firmaMedia(){
+  return Object.keys(media.images).sort().map(k=>`${k}:${media.images[k].length}`).join('|') + '#' + media.sounds.map(s=>`${s.id}:${s.data.length}`).join('|');
+}
+function claveSemana(){ return fechaISO(inicioSemana(new Date())); }
+
+// Se llama en cada guardado: junta los cambios y sube cuando pasan unos segundos sin tocar nada.
+function avisarCambioANube(){
+  if(!nube.activa) return;
+  nube.sucio = true;
+  if(!nube.pendiente){ nube.pendiente = true; guardarAjustesNube({pendiente: true}); }
+  clearTimeout(nube.temporizador);
+  nube.temporizador = setTimeout(subirANube, ESPERA_SUBIDA);
+}
+async function subirANube(){
+  clearTimeout(nube.temporizador);
+  // nunca sube una app vacía ni pisa una copia que este celular no conoce
+  if(!nube.activa || !nube.usuario || nube.subiendo || nube.ofrecer || appVacia(state)) return;
+  nube.subiendo = true; nube.sucio = false; nube.error = '';
+  pintarEstadoNube();
+  try{
+    const indice = (await nube.adaptador.leer('indice')) || {semanales: []};
+    const texto = JSON.stringify(state);
+    const sobran = [];
+    if(indice.actual) sobran.push(indice.actual);
+    indice.actual = await escribirPartes('actual', texto, state.modificado);
+    const clave = claveSemana();
+    if(!indice.semanales.some(c=>c.clave===clave)){
+      indice.semanales.push({clave, ...await escribirPartes('sem-' + clave, texto, state.modificado)});
+      while(indice.semanales.length > COPIAS_SEMANALES) sobran.push(indice.semanales.shift());
+    }
+    const firma = firmaMedia();
+    if(mediaCargada && (!indice.media || indice.media.firma !== firma)){
+      if(indice.media) sobran.push(indice.media);
+      indice.media = {firma, ...await escribirPartes('media', JSON.stringify(media), Date.now())};
+    }
+    await nube.adaptador.escribir('indice', indice);        // recién acá la copia nueva pasa a ser la vigente
+    for(const ref of sobran) await borrarPartes(ref);
+    nube.indice = indice;
+    nube.pendiente = nube.sucio;
+    guardarAjustesNube({pendiente: nube.pendiente, ultimaSubida: Date.now(), base: indice.actual.modificado});
+  } catch(e){
+    nube.error = e.message || String(e);
+  }
+  nube.subiendo = false;
+  pintarEstadoNube();
+  if(nube.sucio && !nube.error) avisarCambioANube();
+}
+// Al iniciar sesión: si la nube tiene una copia que este celular no subió ni restauró, se pregunta; si no, se sube lo pendiente.
+async function sincronizarAlEntrar(){
+  try{
+    nube.error = '';
+    nube.indice = await nube.adaptador.leer('indice');
+    const enNube = nube.indice && nube.indice.actual;
+    nube.ofrecer = !!enNube && enNube.modificado !== ajustesNube().base;
+    if(nube.ofrecer && appVacia(state)){ abrirModal('nube', screenCopiasNube); return; }
+    if(!nube.ofrecer && (nube.pendiente || !enNube)) await subirANube();
+  } catch(e){
+    nube.error = e.message || String(e);
+  }
+  refrescarNube();
+}
+async function prepararNube(){
+  if(!nube.adaptador) nube.adaptador = await adaptadorFirebase();
+  nube.adaptador.alCambiarUsuario(u=>{
+    nube.usuario = u;
+    if(u && nube.activa) sincronizarAlEntrar(); else refrescarNube();
+  });
+}
+function iniciarNube(){
+  if(!nubeDisponible()) return;
+  const a = ajustesNube();
+  nube.activa = !!a.activa; nube.pendiente = !!a.pendiente;
+  prepararNube().catch(e=>{ nube.error = 'No se pudo conectar con la nube: ' + (e.message || e); refrescarNube(); });
+}
+async function activarNube(){
+  try{
+    nube.error = '';
+    nube.activa = true; guardarAjustesNube({activa: true});
+    if(!nube.adaptador) await prepararNube();
+    if(!nube.usuario) await nube.adaptador.entrar();     // al entrar, alCambiarUsuario sincroniza
+    else await sincronizarAlEntrar();
+  } catch(e){
+    nube.error = 'No se pudo entrar con Google: ' + (e.message || e);
+  }
+  refrescarNube();
+}
+async function apagarNube(){
+  nube.activa = false; nube.ofrecer = false;
+  guardarAjustesNube({activa: false});
+  try{ await nube.adaptador.salir(); }
+  catch(e){ nube.error = e.message || String(e); }
+  refrescarNube();
+}
+async function restaurarDeNube(ref){
+  const st = JSON.parse(await leerPartes(ref));
+  const med = nube.indice.media ? JSON.parse(await leerPartes(nube.indice.media)) : media;
+  await restaurarCopia({app: 'entreno', state: st, media: med});
+  // lo restaurado pasa a ser lo conocido; si era una copia semanal, queda pendiente de subir como actual
+  guardarAjustesNube({base: nube.indice.actual.modificado, pendiente: ref !== nube.indice.actual});
+  location.reload();
+}
+function quedarmeConLoLocal(){
+  nube.ofrecer = false;
+  guardarAjustesNube({base: nube.indice.actual.modificado});
+  nube.pendiente = true;
+  cerrarModal();
+  subirANube();
+}
+function textoEstadoNube(){
+  if(nube.error) return `Error: ${nube.error}`;
+  if(!nube.usuario) return 'Sin sesión iniciada.';
+  if(nube.subiendo) return 'Subiendo…';
+  if(nube.ofrecer) return 'En pausa: hay una copia en la nube para revisar.';
+  if(nube.pendiente) return navigator.onLine ? 'Hay cambios pendientes de subir.' : 'Sin conexión: se sube cuando vuelva.';
+  const u = ajustesNube().ultimaSubida;
+  return u ? `Última subida: ${new Date(u).toLocaleString('es-AR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}` : 'Todavía no se subió nada.';
+}
+// el estado cambia solo (subidas en segundo plano): se actualiza el texto sin redibujar, para no interrumpir lo que se esté escribiendo
+function pintarEstadoNube(){
+  const p = document.getElementById('estadoNube');
+  if(p) p.textContent = textoEstadoNube();
+}
+function refrescarNube(){
+  const sinEscritura = !state.routine || currentTab==='inicio' || (currentTab==='ajustes' && !ajustesVista);
+  if(sinEscritura && !modal) render(); else pintarEstadoNube();
+}
+function bloqueNube(){
+  const box = el(`<div style="padding:14px;border-top:1px solid var(--border)"><p style="font-weight:600;margin-bottom:4px">Copia automática en la nube</p></div>`);
+  if(!nube.activa){
+    box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Sube sola cada cambio a tu cuenta de Google. Si se borran los datos o cambiás de celular, entrás y recuperás todo.</p>`));
+    if(nube.error) box.appendChild(el(`<p style="font-size:13px;color:var(--danger);margin-bottom:10px">${esc(nube.error)}</p>`));
+    box.appendChild(boton('Activar con Google', 'btn-primary btn-full', activarNube));
+    return box;
+  }
+  if(nube.usuario) box.appendChild(el(`<p class="secondary" style="font-size:13px">Cuenta: ${esc(nube.usuario.email)}</p>`));
+  box.appendChild(el(`<p id="estadoNube" class="secondary" style="font-size:13px;margin-bottom:10px">${esc(textoEstadoNube())}</p>`));
+  if(!nube.usuario){
+    box.appendChild(boton('Entrar con Google', 'btn-primary btn-full', activarNube));
+  } else {
+    const fila = el(`<div class="fila2"></div>`);
+    fila.appendChild(boton('Subir ahora', 'btn-sm btn-full', ()=>{ nube.pendiente = true; subirANube(); }));
+    fila.appendChild(boton('Ver copias', 'btn-sm btn-full', ()=>abrirModal('nube', screenCopiasNube)));
+    box.appendChild(fila);
+  }
+  box.appendChild(boton('Apagar la copia automática', 'btn-ghost btn-sm btn-full', ()=>{ if(confirm('¿Apagar la copia automática en este celular? Lo que ya está en la nube no se borra.')) apagarNube(); }));
+  return box;
+}
+function fechaHoraCorta(ms){ return new Date(ms).toLocaleString('es-AR', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'}); }
+function screenCopiasNube(){
+  const wrap = document.createElement('div');
+  const indice = nube.indice || {semanales: []};
+  const vacia = appVacia(state);
+  wrap.appendChild(botonVolver(cerrarModal));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Copias en la nube</h2>`));
+  if(nube.ofrecer) wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">${vacia ? 'Encontré una copia tuya en la nube. Restaurala para recuperar todo.' : 'En la nube hay una copia que no salió de este celular. Elegí con cuál seguir: no se pisa nada hasta que decidas.'}</p>`));
+  const restaurar = (ref, nombre)=>async()=>{
+    if(!confirm(`¿Restaurar ${nombre}? Reemplaza todo lo que hay ahora en este celular.`)) return;
+    try{ await restaurarDeNube(ref); }
+    catch(e){ alert('No se pudo restaurar: ' + (e.message || e)); }
+  };
+  const filas = [];
+  if(indice.actual) filas.push(itemFila({icono:'shield', titulo:'Copia actual', sub: fechaHoraCorta(indice.actual.modificado), derecha: boton('Restaurar', 'btn-sm', restaurar(indice.actual, 'la copia actual'))}));
+  [...indice.semanales].reverse().forEach(c=>filas.push(itemFila({icono:'history', titulo:`Semana del ${c.clave.split('-').reverse().join('/')}`, sub: fechaHoraCorta(c.modificado), derecha: boton('Restaurar', 'btn-sm', restaurar(c, `la copia de la semana del ${c.clave.split('-').reverse().join('/')}`))})));
+  if(filas.length) wrap.appendChild(grupo(...filas));
+  else wrap.appendChild(el(`<p class="secondary">Todavía no hay copias en la nube.</p>`));
+  if(nube.ofrecer && !vacia){
+    wrap.appendChild(el('<div style="height:12px"></div>'));
+    wrap.appendChild(boton('Quedarme con lo de este celular', 'btn-full', ()=>{ if(confirm('¿Seguir con los datos de este celular? La copia actual de la nube se reemplaza (las semanales quedan).')) quedarmeConLoLocal(); }));
+  }
+  return wrap;
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && nube.pendiente) subirANube(); });
+window.addEventListener('online', ()=>{ if(nube.pendiente) subirANube(); });
+
 /* ---------- init ---------- */
 render();
 if(state.activeSession && state.activeSession.descanso) programarDescanso();
 iniciarMedia();
+iniciarNube();
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
