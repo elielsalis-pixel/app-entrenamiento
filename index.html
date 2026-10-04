@@ -681,7 +681,7 @@ function cargarTarde(){
   revisarYGuardar({titulo: 'Revisar turno tarde', grupos: [{nombre: parsed.name, ejercicios: parsed.exercises}], tarde: true,
     texto: {id: 'tardePaste', valor: txt}, guardar: ()=>{
       state.routineTarde = parsed;
-      editor = null;
+      editor = null; rutinaSub = null;
       saveState(); render();
     }});
 }
@@ -1387,7 +1387,7 @@ const TABS = [
   {id:'ajustes', label:'Ajustes', icon:'gear'}
 ];
 let rutinaVista = 'manana';   // manana | tarde | biblioteca
-let rutinaSub = null;         // null | 'nueva' | 'ejercicio' | 'nuevoEjercicio'
+let rutinaSub = null;         // null | 'nueva' | 'tardeNueva' | 'ejercicio' | 'nuevoEjercicio'
 let ajustesVista = null;      // null | 'sonidos' | 'ajuste'
 let histVista = 'sesiones';   // sesiones | progreso
 let histDetalle = null;       // {lista, i}
@@ -1647,6 +1647,7 @@ function listaEjerciciosRutina(lista){
 function screenRutina(){
   if(editor) return screenEditor();
   if(rutinaSub==='nueva') return screenRutinaNueva();
+  if(rutinaSub==='tardeNueva') return screenTardeNueva();
   if(rutinaSub==='ejercicio') return screenEjercicioBiblioteca();
   if(rutinaSub==='nuevoEjercicio') return screenNuevoEjercicio();
   const wrap = document.createElement('div');
@@ -1661,7 +1662,8 @@ function screenRutina(){
     card.firstChild.appendChild(boton(`${icon('edit')} Editar`, 'btn-sm', ()=>abrirEditor('tarde', 0)));
     card.appendChild(listaEjerciciosRutina(t.exercises));
     wrap.appendChild(card);
-    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-top:10px">No entra en la rotación de días; en el informe sale en su propia sección.</p>`));
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin:10px 0 12px">No entra en la rotación de días; en el informe sale en su propia sección.</p>`));
+    wrap.appendChild(boton(`${icon('upload')} Cargar turno tarde nuevo`, 'btn-full', ()=>{ rutinaSub='tardeNueva'; render(); }));
     return wrap;
   }
 
@@ -1690,11 +1692,20 @@ function screenRutinaNueva(){
   wrap.appendChild(bloqueCargaRutina('Reemplazar rutina completa', ()=>{ if(confirm('¿Reemplazar toda la rutina actual por esta nueva?')) cargarRutina(); }));
   return wrap;
 }
-function contenidoEditarTarde(){
+function screenTardeNueva(){
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ rutinaSub=null; render(); }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Cargar turno tarde nuevo</h2>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">Reemplaza el turno tarde actual. Tu historial no se pierde.</p>`));
+  wrap.appendChild(contenidoEditarTarde(true));
+  return wrap;
+}
+// enBlanco: para pegar una rutina nueva; si no, trae la actual para editarla como texto
+function contenidoEditarTarde(enBlanco){
   const box = document.createElement('div');
   box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">Rutina aparte para el doble turno (cardio, abs, agarre o lo que sea). No entra en la rotación de días.</p>`));
   box.appendChild(bloqueVerFormato(`
-    <p class="muted">Empieza con <b>TARDE: nombre</b>. Cardio: <b>CARDIO: máquina</b>. Resto: nombre + datos separados por <b> | </b>. Medidas: reps, seg, kg+reps, kg+seg, kg+m.</p>
+    <p class="muted">Empieza con <b>TARDE: nombre</b>. Cardio: <b>CARDIO: máquina</b>. Resto: nombre + datos separados por <b> | </b>. Medidas: reps, seg, kg+reps, kg+seg, kg+m. Circuitos: <b>CIRCUITO 3 vueltas | descanso 90</b>, los ejercicios, y <b>FIN CIRCUITO</b>.</p>
     <p class="codigo">TARDE: Cardio + Abs
 CARDIO: Cinta
 Crunch en polea | series 3 | medida kg+reps | reps 12-15 | descanso 60
@@ -1702,7 +1713,7 @@ Plancha | series 3 | medida seg | descanso 45
 Caminata del granjero | series 3 | medida kg+m | descanso 90</p>`));
   box.appendChild(el(`<textarea id="tardePaste" aria-label="Turno tarde en texto" placeholder="TARDE: Cardio + Abs
 CARDIO: Cinta
-Plancha | series 3 | medida seg | descanso 45">${state.routineTarde ? esc(tardeToText(state.routineTarde)) : ''}</textarea>`));
+Plancha | series 3 | medida seg | descanso 45">${state.routineTarde && !enBlanco ? esc(tardeToText(state.routineTarde)) : ''}</textarea>`));
   box.appendChild(boton(state.routineTarde ? 'Reemplazar turno tarde' : 'Guardar turno tarde', 'btn-primary btn-full', ()=>{ if(!state.routineTarde || confirm('¿Reemplazar el turno tarde actual?')) cargarTarde(); }));
   box.lastChild.style.marginTop = '12px';
   return box;
