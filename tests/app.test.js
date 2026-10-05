@@ -94,7 +94,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('sesión: marcar serie la marca hecha', await ev(()=>state.activeSession.exercises[0].sets[2].done));
   ok('sesión: marcar serie arranca descanso', await ev(()=>state.activeSession.descanso && state.activeSession.descanso.total===120));
   ok('sesión: barra de descanso visible', await page.isVisible('#restbar .tiempo'));
-  ok('sesión: récord personal registrado', await ev(()=>state.prByExercise['Press banca plano']>0 && state.activeSession.exercises[0].prLogrado));
+  ok('sesión: la primera vez queda como referencia, no como récord', await ev(()=>state.prByExercise['Press banca plano']>0 && !state.activeSession.exercises[0].pr));
   await tocar('button[aria-label="RPE 8"]');
   ok('sesión: RPE en serie hecha', await ev(()=>state.activeSession.exercises[0].sets[2].rpe===8));
   // descanso +15 / −15 / saltar
@@ -558,6 +558,33 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     await pr.click('text=Volver al inicio');
     ok('pantalla de error: Volver al inicio funciona', await pr.isVisible('text=Continuar sesión en curso') && !errs.length);
     await pr.close();
+  }
+
+  // --- resumen de sesión: detalle de récords y de qué subió o bajó
+  {
+    const pr2 = await ctx.newPage(); pr2.on('dialog', d=>d.accept());
+    await pr2.goto(URL);
+    await pr2.evaluate(()=>{
+      localStorage.clear();
+      state.routine=parseRoutine('DIA 1: Push\nPress banca plano | series 2 | reps 8-12\nRemo con barra | series 2 | reps 8-12\nPlancha | series 1\nFondo de máquina asistido | series 1 | reps 8-12');
+      const n=(peso,reps)=>({peso,reps,tipo:'Normal',done:true});
+      state.history=[{fecha:'2026-09-28T12:00:00.000Z',dayName:'Push',duracionSeg:600,volumenTotal:2000,exercises:[
+        {nombre:'Press banca plano',sets:[n(50,10),n(50,10)]},{nombre:'Remo con barra',sets:[n(40,10),n(40,10)]},
+        {nombre:'Plancha',medida:'seg',sets:[{seg:40,tipo:'Normal',done:true}]},{nombre:'Fondo de máquina asistido',sets:[n(40,10)]}]}];
+      state.prByExercise={'Press banca plano':500,'Remo con barra':400}; state.slot=0; state.activeSession=null; saveState();
+      empezarSesion(0);
+      const [press, remo, plancha, fondo] = state.activeSession.exercises;
+      press.sets.forEach(s=>{ s.peso=52.5; s.reps=10; }); remo.sets.forEach(s=>{ s.peso=40; s.reps=8; }); plancha.sets[0].seg=40; fondo.sets[0].peso=30; fondo.sets[0].reps=10;
+      [press, remo, plancha, fondo].forEach(e=>e.sets.forEach((s,i)=>{ s.done=true; registrarSetDone(e, s); }));
+      finalizarSesion();
+    });
+    const texto = (await pr2.textContent('#screen')).replace(/\s+/g,' ');
+    ok('resumen: récord con detalle y marca anterior', texto.includes('1 récord personal') && texto.includes('Press banca plano: 52,5 kg × 10 (525 kg; antes 500 kg)'), texto);
+    ok('resumen: qué bajó, qué subió y qué quedó igual', texto.includes('▼ Remo con barra: 800 → 640 kg de volumen (-20%)') && texto.includes('▲ Press banca plano: 1.000 → 1.050 kg de volumen (+5%)') && texto.includes('= Plancha: 40 → 40 seg'), texto);
+    ok('resumen: en los asistidos menos kilos es mejor y no cuenta como récord', texto.includes('▲ Fondo de máquina asistido: 40 → 30 kg de asistencia') && await pr2.evaluate(()=>!state.prByExercise['Fondo de máquina asistido']));
+    ok('resumen: lo que bajó no se pinta de verde', await pr2.evaluate(()=>{ const p=[...document.querySelectorAll('#screen p')].find(x=>x.textContent.includes('Remo con barra')); return p.querySelector('span').style.color==='var(--warn)'; }));
+    ok('resumen: el récord queda en el historial', await pr2.evaluate(()=>state.history[1].exercises[0].pr.antes===500 && state.history[1].prCount===1));
+    await pr2.close();
   }
 
   // --- sesión iniciada sin nada marcado: toma los cambios de la rutina

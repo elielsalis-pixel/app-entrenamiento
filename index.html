@@ -916,14 +916,17 @@ function screenNotas(){
 
 
 
-function registrarSetDone(ej,s){
-  if(!esKgReps(ej.medida)) return;
+function esAsistido(nombre){ return /asistid/.test(normalizarNombre(nombre)); }
+// Récord personal: la mejor serie del ejercicio medida en peso × reps.
+// La primera vez que se hace un ejercicio queda como referencia, no como récord: no hay marca anterior que batir.
+// En los asistidos más kilos es más ayuda, así que no se cuentan.
+function registrarSetDone(ej, s){
+  if(!esKgReps(ej.medida) || esAsistido(ej.nombre)) return;
   const vol = s.peso * s.reps;
-  const prevPR = state.prByExercise[ej.nombre] || 0;
-  if(vol > prevPR){
-    state.prByExercise[ej.nombre] = vol;
-    ej.prLogrado = true;
-  }
+  const anterior = state.prByExercise[ej.nombre] || 0;
+  if(vol <= anterior) return;
+  state.prByExercise[ej.nombre] = vol;
+  if(anterior) ej.pr = {peso: s.peso, reps: s.reps, antes: ej.pr ? ej.pr.antes : anterior};
 }
 
 /* ---------- sonido y frases motivadoras ---------- */
@@ -1026,7 +1029,7 @@ function finalizarSesion(){
       if(e.cardioHecho) exercises.push({nombre:e.nombre, cardio:true, cardioData:{...e.cardioData}});
       return;
     }
-    if(e.prLogrado) prCount++;
+    if(e.pr) prCount++;
     const hechas = e.sets.filter(s=>s.done).map(s=>serieLimpia(s, e.medida));
     if(!hechas.length) return; // no hecho: no se registra ni cambia lo guardado para la próxima
     if(esKgReps(e.medida)) hechas.forEach(s=>{ volumenTotal += s.peso*s.reps; });
@@ -1041,6 +1044,7 @@ function finalizarSesion(){
     const registro = {nombre:e.nombre, sets:hechas};
     if(tarde || e.medida) registro.medida = e.medida;
     if(e.circuito) registro.circuito = e.circuito.vueltas;
+    if(e.pr) registro.pr = e.pr;
     exercises.push(registro);
   });
 
@@ -1221,7 +1225,7 @@ function marcaDeSesion(e){
   const sets = setsHechos(e).filter(esEfectiva);
   if(!sets.length) return null;
   const campos = camposDe(e.medida);
-  if(/asistid/.test(normalizarNombre(e.nombre))) return {v: Math.min(...sets.map(s=>s.peso||0)), unidad: 'kg de asistencia (menos es mejor)', menosEsMejor: true};
+  if(esAsistido(e.nombre)) return {v: Math.min(...sets.map(s=>s.peso||0)), unidad: 'kg de asistencia (menos es mejor)', menosEsMejor: true};
   const conPeso = sets.some(s=>s.peso > 0);
   if(campos.join('+')==='peso+reps' && !conPeso) return {v: Math.max(...sets.map(s=>s.reps||0)), unidad: 'reps'};
   if(campos.join('+')==='peso+reps') return {v: Math.max(...sets.map(s=>estimar1RM(s.peso||0, s.reps||0))), unidad: 'kg 1RM estimado'};
@@ -2288,6 +2292,56 @@ function pintarDescanso(){
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') tickTimer(); });
 
 /* ---------- resumen al finalizar ---------- */
+// Lo que se compara de un ejercicio entre dos sesiones: el volumen de las series de trabajo si es peso × reps;
+// si no, su mejor marca (segundos, reps, kilos de asistencia).
+function rendimientoDe(e){
+  if(esKgReps(e.medida) && !esAsistido(e.nombre)){
+    const v = setsHechos(e).filter(esEfectiva).reduce((a,s)=>a + (s.peso||0)*(s.reps||0), 0);
+    if(v) return {v, unidad: 'kg de volumen'};
+  }
+  return marcaDeSesion(e);
+}
+function comparacionPorEjercicio(r){
+  const lista = (r.turno==='tarde' ? state.historyTarde : state.history) || [];
+  const previa = [...lista].reverse().find(h=>h.dayName===r.dayName && h.fecha < r.fecha);
+  if(!previa) return [];
+  return r.exercises.filter(e=>!e.cardio).map(e=>{
+    const antes = previa.exercises.find(x=>x.nombre===e.nombre && !x.cardio);
+    const a = antes && rendimientoDe(antes), h = rendimientoDe(e);
+    if(!a || !h || a.unidad!==h.unidad) return null;
+    const mejor = h.menosEsMejor ? h.v < a.v : h.v > a.v;
+    let estado = 'igual';
+    if(h.v!==a.v) estado = mejor ? 'mejor' : 'peor';
+    return {nombre: e.nombre, antes: a.v, hoy: h.v, unidad: h.unidad, estado};
+  }).filter(Boolean);
+}
+const ESTILO_COMPARACION = {peor: ['▼','var(--warn)'], mejor: ['▲','var(--success)'], igual: ['=','var(--text-2)']};
+function detalleResumen(r){
+  const box = el(`<div style="text-align:left"></div>`);
+  const num = n=>(Math.round(n*10)/10).toLocaleString('es-AR');
+  const prs = r.exercises.filter(e=>e.pr);
+  if(prs.length){
+    const card = el(`<div class="card" style="padding:14px 16px;margin-bottom:10px"><p style="font-weight:600;color:var(--success);margin-bottom:2px">${prs.length} récord${prs.length>1?'s':''} personal${prs.length>1?'es':''}</p><p class="muted" style="font-size:12px;margin-bottom:8px">Tu mejor serie del ejercicio, medida en peso × reps.</p></div>`);
+    prs.forEach(e=>card.appendChild(el(`<p style="font-size:14px;padding:3px 0"><b>${esc(e.nombre)}:</b> ${num(e.pr.peso)} kg × ${e.pr.reps} <span class="secondary">(${num(e.pr.peso*e.pr.reps)} kg; antes ${num(e.pr.antes)} kg)</span></p>`)));
+    box.appendChild(card);
+  }
+  const comp = comparacionPorEjercicio(r);
+  if(comp.length){
+    const orden = {peor:0, mejor:1, igual:2};
+    const card = el(`<div class="card" style="padding:14px 16px;margin-bottom:10px"><p style="font-weight:600;margin-bottom:2px">Comparado con la última vez</p></div>`);
+    if(r.comparacion!==null && r.comparacion!==undefined){
+      const color = ESTILO_COMPARACION[r.comparacion < 0 ? 'peor' : (r.comparacion > 0 ? 'mejor' : 'igual')][1];
+      card.appendChild(el(`<p style="font-size:13px;color:${color};margin-bottom:8px">Volumen total: ${r.comparacion>=0?'+':''}${r.comparacion}%</p>`));
+    }
+    [...comp].sort((a,b)=>orden[a.estado]-orden[b.estado]).forEach(c=>{
+      const [flecha, color] = ESTILO_COMPARACION[c.estado];
+      const pct = c.antes ? ` (${c.hoy>c.antes?'+':''}${Math.round((c.hoy-c.antes)/c.antes*100)}%)` : '';
+      card.appendChild(el(`<p style="font-size:14px;padding:3px 0"><span style="color:${color};font-weight:700">${flecha}</span> <b>${esc(c.nombre)}:</b> ${num(c.antes)} → ${num(c.hoy)} ${esc(c.unidad)}${c.estado==='igual' ? '' : pct}</p>`));
+    });
+    box.appendChild(card);
+  }
+  return box;
+}
 function screenResumen(){
   const r = state.lastResumen;
   const totalSeries = r.exercises.reduce((a,e)=>a+(e.sets||[]).length,0);
@@ -2303,10 +2357,7 @@ function screenResumen(){
   grid.appendChild(el(`<div class="metric"><p>Volumen total</p><p>${Math.round(r.volumenTotal).toLocaleString('es-AR')} kg</p></div>`));
   grid.appendChild(el(`<div class="metric"><p>Duración</p><p>${Math.round(r.duracionSeg/60)} min</p></div>`));
   wrap.appendChild(grid);
-  if(r.prCount>0) wrap.appendChild(el(`<p style="font-size:14px;color:var(--success);margin-bottom:8px">${r.prCount} récord${r.prCount>1?'es':''} personal${r.prCount>1?'es':''} hoy</p>`));
-  if(r.comparacion!==null && r.comparacion!==undefined){
-    wrap.appendChild(el(`<p class="secondary" style="font-size:14px;margin-bottom:8px">${r.comparacion>=0?'+':''}${r.comparacion}% de volumen vs. la última vez que hiciste ${esc(r.dayName)}</p>`));
-  }
+  wrap.appendChild(detalleResumen(r));
   if(state.aviso){
     wrap.appendChild(el(`<div class="banner" style="margin-top:8px">${icon('wand')}<span>${esc(textoAviso(state.aviso))}</span></div>`));
   }
@@ -3367,9 +3418,11 @@ function textoEstadoNube(){
   if(!nube.usuario) return 'Sin sesión iniciada.';
   if(nube.subiendo) return 'Subiendo…';
   if(nube.ofrecer) return 'En pausa: hay una copia en la nube para revisar.';
-  if(nube.pendiente) return navigator.onLine ? 'Hay cambios pendientes de subir.' : 'Sin conexión: se sube cuando vuelva.';
   const u = ajustesNube().ultimaSubida;
-  return u ? `Última subida: ${new Date(u).toLocaleString('es-AR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}` : 'Todavía no se subió nada.';
+  const ultima = u ? `Última subida: ${new Date(u).toLocaleString('es-AR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'})}` : 'Todavía no se subió nada.';
+  // con cambios pendientes igual se muestra la última subida: así se ve que venía guardando
+  if(nube.pendiente) return `${navigator.onLine ? 'Hay cambios de los últimos segundos por subir.' : 'Sin conexión: se sube cuando vuelva.'} ${ultima}`;
+  return ultima;
 }
 // el estado cambia solo (subidas en segundo plano): se actualiza el texto sin redibujar, para no interrumpir lo que se esté escribiendo
 function pintarEstadoNube(){
