@@ -587,7 +587,7 @@ function parseRoutine(text){
 let currentTab = state.currentTab || 'inicio';
 let sessionView = state.sessionView || 'activa';
 
-function setTab(id){ modal = null; revision = null; if(currentTab==='sesion' && id!=='sesion' && sessionView==='resumen') setSessionView('activa'); currentTab = id; state.currentTab = id; saveState(); render(); }
+function setTab(id){ modal = null; revision = null; if(id==='sesion') actualizarSesionSinEmpezar(); if(currentTab==='sesion' && id!=='sesion' && sessionView==='resumen') setSessionView('activa'); currentTab = id; state.currentTab = id; saveState(); render(); }
 function setSessionView(v){ sessionView = v; state.sessionView = v; saveState(); }
 
 
@@ -740,10 +740,25 @@ function ejercicioDeSesion(e, clave, usarGeneral){
 }
 function iniciarSesion(datos, ejercicios, clave, usarGeneral){
   if(state.activeSession){ alert('Tenés una sesión en curso. Finalizala antes de empezar otra.'); setTab('sesion'); return; }
-  state.activeSession = {...datos, inicio: Date.now(), focusIdx: 0, exercises: ejercicios.map(e=>ejercicioDeSesion(e, clave, usarGeneral))};
+  state.activeSession = {...datos, inicio: Date.now(), focusIdx: 0, firma: firmaRutina(ejercicios), exercises: ejercicios.map(e=>ejercicioDeSesion(e, clave, usarGeneral))};
   state.resumenCelebrado = false;
   setSessionView('activa');
   setTab('sesion');
+}
+function firmaRutina(ejercicios){ return ejerciciosATexto(ejercicios).join('\n'); }
+// Una sesión abierta pero sin nada marcado toma los cambios que se le hayan hecho a la rutina de ese día.
+// Con algo ya hecho no se toca: lo registrado manda.
+function actualizarSesionSinEmpezar(){
+  const ses = state.activeSession;
+  if(!ses || ses.exercises.some(e=>e.cardioHecho || e.sets.some(s=>s.done))) return;
+  const tarde = ses.turno==='tarde';
+  const origen = tarde ? state.routineTarde : state.routine && state.routine.days[ses.dayIdx % state.routine.days.length];
+  if(!origen || firmaRutina(origen.exercises)===ses.firma) return;
+  ses.exercises = origen.exercises.map(e=>ejercicioDeSesion(e, tarde ? TARDE_KEY : origen.name, !tarde));
+  ses.firma = firmaRutina(origen.exercises);
+  ses.focusIdx = 0;
+  if(tarde) ses.rutinaNombre = origen.name; else ses.dayName = origen.name;
+  saveState();
 }
 function empezarSesion(dayIdx){
   const day = state.routine.days[dayIdx % state.routine.days.length];
@@ -3195,12 +3210,27 @@ async function adaptadorFirebase(){
     borrar: id=>fs.deleteDoc(ref(id))
   };
 }
+// Antes de escribir se anota qué se va a subir: si el celular congela la app a mitad de camino
+// (pasa al mandarla a segundo plano), la próxima subida sabe qué pedazos quedaron sueltos y los borra.
 async function escribirPartes(prefijo, texto, modificado){
-  const sello = Date.now().toString(36);
-  let partes = 0;
-  for(let i=0; i<texto.length; i+=TROZO) await nube.adaptador.escribir(`${prefijo}.${sello}.${partes++}`, {t: texto.slice(i, i+TROZO)});
-  return {prefijo, sello, partes, modificado};
+  const ref = {prefijo, sello: Date.now().toString(36), partes: Math.ceil(texto.length / TROZO), modificado};
+  guardarAjustesNube({enCurso: [...(ajustesNube().enCurso || []), ref]});
+  for(let i=0; i<ref.partes; i++) await nube.adaptador.escribir(`${prefijo}.${ref.sello}.${i}`, {t: texto.slice(i*TROZO, (i+1)*TROZO)});
+  return ref;
 }
+async function borrarSubidasInconclusas(indice){
+  const vigentes = [indice.actual, indice.media, ...indice.semanales].filter(Boolean).map(r=>`${r.prefijo}.${r.sello}`);
+  for(const ref of ajustesNube().enCurso || []) if(!vigentes.includes(`${ref.prefijo}.${ref.sello}`)) await borrarPartes(ref);
+  guardarAjustesNube({enCurso: []});
+}
+// Cada instalación tiene un identificador propio: así se distingue una copia subida desde acá de una de otro celular.
+function idDispositivo(){
+  let id = ajustesNube().dispositivo;
+  if(!id){ id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); guardarAjustesNube({dispositivo: id}); }
+  return id;
+}
+// conocida: la subió este celular (aunque la app se haya congelado antes de anotarlo) o es la que se restauró acá
+function copiaConocida(ref){ return ref.dispositivo === idDispositivo() || ref.modificado === ajustesNube().base; }
 async function leerPartes(ref){
   let texto = '';
   for(let i=0; i<ref.partes; i++){
@@ -3234,10 +3264,11 @@ async function subirANube(){
   pintarEstadoNube();
   try{
     const indice = (await nube.adaptador.leer('indice')) || {semanales: []};
+    await borrarSubidasInconclusas(indice);
     const texto = JSON.stringify(state);
     const sobran = [];
     if(indice.actual) sobran.push(indice.actual);
-    indice.actual = await escribirPartes('actual', texto, state.modificado);
+    indice.actual = {...await escribirPartes('actual', texto, state.modificado), dispositivo: idDispositivo()};
     const clave = claveSemana();
     if(!indice.semanales.some(c=>c.clave===clave)){
       indice.semanales.push({clave, ...await escribirPartes('sem-' + clave, texto, state.modificado)});
@@ -3248,11 +3279,13 @@ async function subirANube(){
       if(indice.media) sobran.push(indice.media);
       indice.media = {firma, ...await escribirPartes('media', JSON.stringify(media), Date.now())};
     }
+    // lo reemplazado también se anota: si la app se congela después de escribir el índice, se borra en la próxima subida
+    guardarAjustesNube({enCurso: [...(ajustesNube().enCurso || []), ...sobran]});
     await nube.adaptador.escribir('indice', indice);        // recién acá la copia nueva pasa a ser la vigente
     for(const ref of sobran) await borrarPartes(ref);
     nube.indice = indice;
     nube.pendiente = nube.sucio;
-    guardarAjustesNube({pendiente: nube.pendiente, ultimaSubida: Date.now(), base: indice.actual.modificado});
+    guardarAjustesNube({pendiente: nube.pendiente, ultimaSubida: Date.now(), base: indice.actual.modificado, enCurso: []});
   } catch(e){
     nube.error = e.message || String(e);
   }
@@ -3266,7 +3299,7 @@ async function sincronizarAlEntrar(){
     nube.error = '';
     nube.indice = await nube.adaptador.leer('indice');
     const enNube = nube.indice && nube.indice.actual;
-    nube.ofrecer = !!enNube && enNube.modificado !== ajustesNube().base;
+    nube.ofrecer = !!enNube && !copiaConocida(enNube);
     if(nube.ofrecer && appVacia(state)){ abrirModal('nube', screenCopiasNube); return; }
     if(!nube.ofrecer && (nube.pendiente || !enNube)) await subirANube();
   } catch(e){
@@ -3396,6 +3429,7 @@ document.addEventListener('visibilitychange', ()=>{ if(document.hidden && nube.p
 window.addEventListener('online', ()=>{ if(!nube.adaptador) iniciarNube(); else if(nube.pendiente) subirANube(); });
 
 /* ---------- init ---------- */
+actualizarSesionSinEmpezar();
 render();
 if(state.activeSession && state.activeSession.descanso) programarDescanso();
 iniciarMedia();

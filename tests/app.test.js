@@ -560,6 +560,21 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     await pr.close();
   }
 
+  // --- sesión iniciada sin nada marcado: toma los cambios de la rutina
+  {
+    const ps = await ctx.newPage(); ps.on('dialog', d=>d.accept());
+    await ps.goto(URL);
+    await ps.evaluate(r=>{ localStorage.clear(); state.routine=parseRoutine(r); state.slot=0; state.activeSession=null; saveState(); empezarSesion(0); setTab('rutina'); }, RUTINA);
+    await ps.evaluate(()=>{ const d=state.routine.days[0]; d.exercises[0].nombre='Press banca con mancuernas'; d.exercises.unshift({nombre:'Rotación externa en polea', ...DEF_MANANA, series:2, alternativas:[]}); saveState(); setTab('sesion'); });
+    ok('sesión sin empezar: toma la rutina editada', await ps.evaluate(()=>state.activeSession.exercises.map(e=>e.nombre).slice(0,2).join()==='Rotación externa en polea,Press banca con mancuernas' && state.activeSession.exercises[0].sets.length===2) && await ps.isVisible('h1:has-text("Rotación externa en polea")'));
+    await ps.evaluate(()=>{ state.activeSession.exercises[0].sets[0].done=true; state.routine.days[0].exercises[0].nombre='Rotación externa con mancuerna'; saveState(); setTab('inicio'); setTab('sesion'); });
+    ok('sesión con series hechas: no se toca', await ps.evaluate(()=>state.activeSession.exercises[0].nombre==='Rotación externa en polea' && state.activeSession.exercises[0].sets[0].done));
+    await ps.evaluate(()=>{ const s=state.activeSession; s.exercises[0].sets[0].done=false; delete s.firma; saveState(); });
+    await ps.reload(); await ps.waitForTimeout(300);
+    ok('sesión vieja sin empezar: se actualiza al abrir la app', await ps.evaluate(()=>state.activeSession.exercises[0].nombre==='Rotación externa con mancuerna'));
+    await ps.close();
+  }
+
   // --- copia automática en la nube (con una nube simulada que vive fuera de los datos de la app)
   {
     // sin service worker y sin acceso al SDK real: la prueba usa siempre la nube simulada
@@ -582,7 +597,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     });
     const pn = await ctxN.newPage(); pn.on('dialog', d=>d.accept());
     const errN=[]; pn.on('pageerror', e=>errN.push(e.message));
-    const conNube = async()=>{ await pn.evaluate(()=>{ nube.adaptador = nubeFalsa(); iniciarNube(); }); await pn.waitForTimeout(250); };
+    const conNube = async()=>{ await pn.evaluate(()=>{ nube.adaptador = nubeFalsa(); iniciarNube(); }); await pn.waitForTimeout(250); await pn.waitForFunction(()=>!nube.subiendo); };
     const docs = ()=>pn.evaluate(()=>JSON.parse(localStorage.getItem('nubeFalsa')||'{}'));
     const idsDe = (d, pre)=>Object.keys(d).filter(k=>k.startsWith(pre+'.'));
     await pn.goto(URL);
@@ -610,6 +625,30 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     ok('nube: una subida cortada no rompe la copia vigente', trasCorte.indice.actual.sello===d.indice.actual.sello && await pn.evaluate(async()=>JSON.parse(await leerPartes(nube.indice.actual)).notasEjercicio['Press banca plano'].length===600000));
     await pn.evaluate(()=>{ window.cortarRed=false; return subirANube(); });
     ok('nube: al volver la red sube lo pendiente', await pn.evaluate(()=>!nube.error && !nube.pendiente));
+    // el celular congela la app justo después de escribir en la nube y antes de anotarlo (pasa al mandarla a segundo plano)
+    await pn.evaluate(()=>{
+      const real = nube.adaptador.escribir;
+      nube.adaptador.escribir = async(id, datos)=>{ await real(id, datos); if(id==='indice') await new Promise(()=>{}); };
+      state.slot = state.slot; saveState(); subirANube();
+    });
+    await pn.waitForTimeout(300);
+    const congelada = await docs();
+    const baseAnotada = JSON.parse(await pn.evaluate(()=>localStorage.entrenoNube)).base;
+    await pn.reload(); await pn.waitForTimeout(300); await conNube();
+    ok('app congelada a mitad de subida: la copia propia no se toma por ajena', baseAnotada!==congelada.indice.actual.modificado && await pn.evaluate(()=>!nube.ofrecer && !!nube.usuario), JSON.stringify([baseAnotada, congelada.indice.actual, await pn.evaluate(()=>[nube.ofrecer, nube.error, localStorage.entrenoNube])]));
+    // y si se congela antes de terminar, los pedazos sueltos se borran en la subida siguiente
+    await pn.evaluate(()=>{
+      const real = nube.adaptador.escribir;
+      nube.adaptador.escribir = async(id, datos)=>{ if(id==='indice') await new Promise(()=>{}); await real(id, datos); };
+      state.slot = state.slot; saveState(); subirANube();
+    });
+    await pn.waitForTimeout(300);
+    const sueltos = idsDe(await docs(), 'actual').length;
+    await pn.reload(); await pn.waitForTimeout(300); await conNube();
+    await pn.evaluate(()=>{ saveState(); return subirANube(); });
+    d = await docs();
+    ok('subida cortada: los pedazos sueltos no se acumulan', sueltos === 2*d.indice.actual.partes && idsDe(d,'actual').length===d.indice.actual.partes && idsDe(d,'media').length===d.indice.media.partes, JSON.stringify([sueltos, d.indice.actual.partes, idsDe(d,'actual'), await pn.evaluate(()=>[nube.error, nube.ofrecer, localStorage.entrenoNube])]));
+    await pn.evaluate(()=>setTab('ajustes'));
     // copias semanales: se guardan las últimas 4
     await pn.evaluate(()=>{ const x=JSON.parse(localStorage.nubeFalsa); Object.keys(x).filter(k=>k.startsWith('sem-')).forEach(k=>delete x[k]); x.indice.semanales=['2026-08-31','2026-09-07','2026-09-14','2026-09-21'].map(c=>{ x['sem-'+c+'.v.0']={t:'{}'}; return {clave:c, prefijo:'sem-'+c, sello:'v', partes:1, modificado:1}; }); localStorage.nubeFalsa=JSON.stringify(x); state.slot=state.slot; saveState(); return subirANube(); });
     d = await docs();
