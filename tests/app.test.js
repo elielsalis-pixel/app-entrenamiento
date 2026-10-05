@@ -594,6 +594,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     await pn.click('text=Activar con Google'); await pn.waitForTimeout(400);
     let d = await docs();
     ok('nube: al activar sube la copia, una semanal y los medios', !!d.indice && d.indice.actual.partes===idsDe(d,'actual').length && d.indice.semanales.length===1 && !!d.indice.media && await pn.evaluate(()=>nube.usuario.email==='eliel@prueba.com' && !nube.pendiente));
+    ok('nube: activa, ya no dice que todo vive solo en el celular', await pn.isVisible('text=Tus datos ya se guardan solos en la nube') && !(await pn.isVisible('text=Todo vive solo en este celular')));
     ok('nube: estado visible en Ajustes', await pn.isVisible('text=Cuenta: eliel@prueba.com') && (await pn.textContent('#estadoNube')).startsWith('Última subida'));
     const selloAntes = d.indice.actual.sello;
     await pn.waitForTimeout(5);

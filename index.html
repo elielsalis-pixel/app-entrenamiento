@@ -344,6 +344,11 @@ async function restaurarCopia(obj){
   for(const n of Object.keys(imgs)) await mediaPut('img:'+n, imgs[n]);
   for(const s of ((obj.media && obj.media.sounds) || [])) await mediaPut('snd:'+s.id, s);
 }
+function textoCopiaManual(dias){
+  const ultima = dias===null ? '' : `Última copia a archivo: hace ${dias} día${dias===1?'':'s'}. `;
+  if(nube.activa && nube.usuario) return `${ultima}Tus datos ya se guardan solos en la nube. La copia a archivo es un respaldo extra, por si querés tenerla aparte.`;
+  return `${dias===null ? '<b>Todavía no hiciste ninguna copia.</b> ' : ultima}Todo vive solo en este celular: descargá la copia y subila a Drive desde Descargas.`;
+}
 function diasDesdeUltimaCopia(){
   if(!state.ultimaCopia) return null;
   return Math.floor((Date.now() - new Date(state.ultimaCopia).getTime()) / 86400000);
@@ -1751,7 +1756,7 @@ function screenAjustes(){
 
   wrap.appendChild(etiqueta('Copia de seguridad'));
   const dias = diasDesdeUltimaCopia();
-  const copia = el(`<div style="padding:14px"><p class="secondary" style="font-size:13px;margin-bottom:10px">${dias===null?'<b>Todavía no hiciste ninguna copia.</b>':`Última copia: hace ${dias} día${dias===1?'':'s'}.`} Todo vive solo en este celular: descargá la copia y subila a Drive desde Descargas.</p></div>`);
+  const copia = el(`<div style="padding:14px"><p class="secondary" style="font-size:13px;margin-bottom:10px">${textoCopiaManual(dias)}</p></div>`);
   const filaCopia = el(`<div class="fila2"></div>`);
   filaCopia.appendChild(boton(`${icon('down')} Descargar`, 'btn-full', descargarCopia));
   filaCopia.appendChild(botonRestaurar());
