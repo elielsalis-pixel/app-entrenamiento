@@ -208,7 +208,8 @@ const nube = {
   sucio: false,       // hubo cambios mientras se subía
   subiendo: false,
   error: '',
-  temporizador: null
+  temporizador: null,
+  escuchando: null    // adaptador al que ya se le pidió avisar los cambios de sesión
 };
 function saveState(){
   try{
@@ -3154,7 +3155,14 @@ function mostrarCierre(ejs){
 /* ---------- copia automática en la nube (Firebase) ---------- */
 // Identificador público del proyecto de Firebase. Lo que protege los datos son las reglas de la base:
 // solo la cuenta dueña puede leer o escribir bajo usuarios/{uid}.
-const FIREBASE_CONFIG = null;
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCmENyTkUe6eBqg69tLAVP7cP7CwH_MfA4",
+  authDomain: "entreno-9f842.firebaseapp.com",
+  projectId: "entreno-9f842",
+  storageBucket: "entreno-9f842.firebasestorage.app",
+  messagingSenderId: "739404554059",
+  appId: "1:739404554059:web:84bef04348e581cd0a92ce"
+};
 const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const TROZO = 250000;        // caracteres por documento: bajo el tope de 1 MiB de Firestore aun con tildes
 const COPIAS_SEMANALES = 4;
@@ -3261,8 +3269,16 @@ async function sincronizarAlEntrar(){
   }
   refrescarNube();
 }
+// El SDK se carga una sola vez aunque lo pidan el arranque y el botón a la vez; si falla (sin señal), se puede reintentar.
+let cargaNube = null;
 async function prepararNube(){
-  if(!nube.adaptador) nube.adaptador = await adaptadorFirebase();
+  if(!nube.adaptador){
+    cargaNube = cargaNube || adaptadorFirebase();
+    try{ nube.adaptador = await cargaNube; }
+    catch(e){ cargaNube = null; throw e; }
+  }
+  if(nube.escuchando===nube.adaptador) return;
+  nube.escuchando = nube.adaptador;
   nube.adaptador.alCambiarUsuario(u=>{
     nube.usuario = u;
     if(u && nube.activa) sincronizarAlEntrar(); else refrescarNube();
@@ -3372,7 +3388,7 @@ function screenCopiasNube(){
   return wrap;
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden && nube.pendiente) subirANube(); });
-window.addEventListener('online', ()=>{ if(nube.pendiente) subirANube(); });
+window.addEventListener('online', ()=>{ if(!nube.adaptador) iniciarNube(); else if(nube.pendiente) subirANube(); });
 
 /* ---------- init ---------- */
 render();

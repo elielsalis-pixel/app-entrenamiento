@@ -562,7 +562,9 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
 
   // --- copia automática en la nube (con una nube simulada que vive fuera de los datos de la app)
   {
-    const ctxN = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
+    // sin service worker y sin acceso al SDK real: la prueba usa siempre la nube simulada
+    const ctxN = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires', serviceWorkers:'block'});
+    await ctxN.route('**/*gstatic.com/**', r=>r.abort());
     await ctxN.addInitScript(()=>{
       window.nubeFalsa = ()=>{
         const todo = ()=>JSON.parse(localStorage.getItem('nubeFalsa')||'{}');
@@ -585,8 +587,9 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     const idsDe = (d, pre)=>Object.keys(d).filter(k=>k.startsWith(pre+'.'));
     await pn.goto(URL);
     await pn.evaluate(r=>{ localStorage.clear(); state.routine=parseRoutine(r); state.history=[{fecha:'2026-10-01T12:00:00Z',dayName:'Push',exercises:[{nombre:'Press banca plano',sets:[{peso:60,reps:10,tipo:'Normal',done:true}]}],duracionSeg:600}]; saveState(); setTab('ajustes'); }, RUTINA);
-    ok('nube: sin configurar no aparece', !(await pn.isVisible('text=Copia automática en la nube')));
-    await conNube(); await pn.evaluate(()=>render());
+    await pn.waitForTimeout(300);
+    ok('nube: sin señal al abrir, la app funciona y avisa en Ajustes', await pn.isVisible('text=Copia automática en la nube') && await pn.isVisible('text=No se pudo conectar con la nube') && !errN.length);
+    await conNube(); await pn.evaluate(()=>{ nube.error=''; render(); });
     ok('nube: se ofrece activar', await pn.isVisible('text=Activar con Google'));
     await pn.click('text=Activar con Google'); await pn.waitForTimeout(400);
     let d = await docs();
