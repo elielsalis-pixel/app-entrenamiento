@@ -43,8 +43,44 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   // --- pantalla vacía
   ok('vacía: pide cargar rutina', await visible('Cargá tu rutina'));
   ok('vacía: botón restaurar copia', await page.isVisible('button:has-text("Restaurar")'));
-  await tocar('text=Copiar prompt para pedírselo a una IA');
-  ok('vacía: copia prompt generador', (await clip()).includes('DIA 1: [nombre del día'));
+  // --- kit del entrenador: instrucciones y archivos para la IA
+  await tocar('text=Armar tu entrenador con una IA');
+  ok('kit: se abre desde la pantalla vacía con sus 4 pasos', await visible('PASO 1') && await visible('PASO 4') && await visible('Cargalos en tu IA'));
+  await tocar('button:has-text("Copiar")');
+  const instrucciones = await clip();
+  ok('kit: copia las instrucciones del entrenador', instrucciones.startsWith('ROL') && instrucciones.includes('reglas-para-armar-rutinas.txt') && instrucciones.includes('LA PRIMERA VEZ') && await visible('Instrucciones copiadas'));
+  const bajarKit = async(boton)=>{ const [d] = await Promise.all([page.waitForEvent('download'), tocar(`button:has-text("${boton}")`)]); const ruta = '/tmp/kit-'+d.suggestedFilename(); await d.saveAs(ruta); return {nombre: d.suggestedFilename(), texto: fs.readFileSync(ruta, 'utf8')}; };
+  const kitInstr = await bajarKit('Descargar'), kitReglas = await bajarKit('Reglas'), kitBib = await bajarKit('Biblioteca');
+  ok('kit: descarga los tres archivos en .txt', kitInstr.nombre==='instrucciones-del-entrenador.txt' && kitInstr.texto===instrucciones && kitReglas.nombre==='reglas-para-armar-rutinas.txt' && kitReglas.texto.includes('PARTE 1. FORMATOS QUE LEE LA APP') && kitBib.nombre==='biblioteca-ejercicios.txt');
+  ok('kit: la biblioteca trae todos los ejercicios con su nombre exacto', await ev(t=>{ const filas = t.slice(t.indexOf('nombre;otros_nombres_reconocidos')).trim().split('\n'); return filas.length===BIBLIOTECA.length+1 && filas[0].split(';').length===10 && BIBLIOTECA.every(x=>t.includes('\n'+(/[;"]/.test(x.nombre) ? '"'+x.nombre.replace(/"/g,'""')+'"' : x.nombre)+';')); }, kitBib.texto));
+  ok('kit: la biblioteca suma los ejercicios propios', await ev(()=>{ state.bibliotecaPropia=[{id:'propio-9', nombre:'Remo Hammer casero', alias:['remo hammer casero'], patron:'tiron_h', principal:['Dorsales'], secundarios:[], equipo:'Máquina', tipo:'Propio', nivel:'—', lumbar:'baja', medida:'kg+reps', mecanica:'', fotos:[], propio:true}]; const t=bibliotecaATexto(); state.bibliotecaPropia=[]; return t.includes('\nRemo Hammer casero;;Tirón horizontal (remos);Dorsales;;Máquina;—;baja;kg+reps;sí'); }));
+  // todos los ejemplos del kit pasan por el lector real de la app y usan nombres que están en la biblioteca
+  const kitMal = await ev(()=>{
+    const mal = [], enBib = n=>BIBLIOTECA.some(x=>x.nombre===n);
+    [PROMPT_ENTRENADOR, REGLAS_ENTRENADOR].forEach(t=>{
+      if(/eliel|turno tarde|TARDE:|Project/i.test(t)) mal.push('texto personal o viejo');
+      const lineas = t.split('\n');
+      lineas.forEach((l, i)=>{
+        if(/^AJUSTE:/.test(l)){ const n = l.match(/^AJUSTE:\s*(.+?)\s*\|\s*peso\s*[\d.,]+$/); if(!n || !enBib(n[1])) mal.push(l); return; }
+        const inicio = /^(DIA \d+:|APARTE:|CIRCUITO )/.test(l) && !/^(DIA \d+:|APARTE:|PLAN:)/.test(lineas[i-1] || '') && !(lineas[i-1] || '').includes('|') && !/^(CARDIO:|FIN CIRCUITO)/.test(lineas[i-1] || '');
+        if(!inicio) return;
+        let fin = i; while(fin < lineas.length && lineas[fin].trim() && !lineas[fin].startsWith('\u0060')) fin++;
+        const bloque = lineas.slice(i, fin).filter(x=>x!=='...').join('\n');
+        const p = parseRoutine(/^CIRCUITO/.test(l) ? 'DIA 1: Prueba\n'+bloque : bloque);
+        const rutinas = [...p.days, ...p.aparte];
+        if(!rutinas.length) mal.push('no se leyó: '+l);
+        rutinas.forEach(r=>r.exercises.forEach(e=>[e.nombre, ...(e.alternativas||[]).map(a=>a.nombre)].forEach(n=>{ if(!enBib(n)) mal.push(n); })));
+        if(/^CIRCUITO/.test(l) && !p.days[0].exercises.every(e=>e.circuito)) mal.push('circuito mal leído');
+      });
+    });
+    const ej = parseRoutine(PROMPT_ENTRENADOR.slice(PROMPT_ENTRENADOR.indexOf('PLAN: Hipertrofia'), PROMPT_ENTRENADOR.indexOf('ESTILO')).replace(/\u0060/g, ''));
+    if(!(ej.plan && ej.plan.length===3 && ej.days.length===1 && ej.days[0].exercises.length===5 && ej.days[0].exercises[4].cardio && ej.days[0].exercises[2].circuito)) mal.push('ejemplo de entrega mal leído');
+    const reglasAparte = parseRoutine(REGLAS_ENTRENADOR.slice(REGLAS_ENTRENADOR.indexOf('APARTE: Aeróbico'), REGLAS_ENTRENADOR.indexOf('- Cada rutina aparte empieza')));
+    if(!(reglasAparte.aparte.length===1 && reglasAparte.aparte[0].exercises.length===4 && reglasAparte.aparte[0].exercises[3].medida==='kg+m' && reglasAparte.aparte[0].exercises[2].medida==='seg')) mal.push('ejemplo de rutina aparte mal leído');
+    return mal;
+  });
+  ok('kit: los ejemplos se leen con la app y usan nombres de la biblioteca', kitMal.length===0, kitMal.join(' | '));
+  await tocar('text=Volver');
   await page.fill('#routinepaste', RUTINA);
   await tocar('button:has-text("Cargar rutina")');
   ok('carga rutina: 5 días', await ev(()=>state.routine.days.length===5));
