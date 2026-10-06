@@ -207,3 +207,37 @@ Revisiones
 - Durante un bloque (revisión intermedia): ajustá dentro de la rutina vigente (pesos, reps, algún sustituto puntual). No cambies la estructura.
 - Al cerrar un bloque o el plan: analizá el bloque completo y decidí si mantenés la estructura (días, series y reps) con ejercicios y cargas nuevas o si también la cambiás. Antes de decidir, preguntá si cambiaron sus tiempos o preferencias.
 `;
+
+// Cómo dejar armado el entrenador en cada IA. Los nombres de los botones son los de la ayuda oficial de cada una
+// (revisados en octubre de 2026); si alguna cambia su pantalla, se corrige acá.
+const GUIAS_IA = {
+  claude: {nombre: 'Claude', pasos: [
+    'Abrí Claude (la app o claude.ai) y entrá a "Proyectos".',
+    'Tocá "Nuevo proyecto" y ponele un nombre, por ejemplo "Entrenador".',
+    'En las instrucciones del proyecto, pegá las instrucciones del paso 1.',
+    'En los archivos del proyecto (el conocimiento), subí los dos archivos del paso 2.',
+    'Abrí un chat dentro del proyecto y mandale el primer mensaje del paso 4.'],
+    nota: 'En Claude se llama Proyecto. Con la cuenta gratis se pueden crear hasta 5.'},
+  gemini: {nombre: 'Gemini', pasos: [
+    'Abrí gemini.google.com en el navegador, del celular o de la computadora. Los Gems se crean solo ahí; después la app de Gemini los usa.',
+    'Abrí el menú, entrá a "Gems" y tocá "Nueva Gem".',
+    'Ponele un nombre, por ejemplo "Entrenador", y en las instrucciones pegá las del paso 1.',
+    'En "Conocimiento", tocá "Agregar archivos" y subí los dos archivos del paso 2.',
+    'Tocá "Guardar". Después abrí tu Gem y mandale el primer mensaje del paso 4.'],
+    nota: 'En Gemini se llama Gem.'},
+  chatgpt: {nombre: 'ChatGPT', pasos: [
+    'Abrí ChatGPT (la app o chatgpt.com) y, en el menú lateral, tocá "Nuevo proyecto". Ponele un nombre, por ejemplo "Entrenador".',
+    'Dentro del proyecto, abrí el menú de los tres puntos y entrá a "Configuración del proyecto": ahí pegá las instrucciones del paso 1.',
+    'Agregá al proyecto los dos archivos del paso 2.',
+    'Abrí un chat dentro del proyecto y mandale el primer mensaje del paso 4.'],
+    nota: 'En ChatGPT se llama Proyecto. Los "GPT" personalizados no se pueden crear con una cuenta personal. La cuenta gratis admite hasta 5 archivos por proyecto; acá son 2.'},
+  otra: {nombre: 'Otra', pasos: [
+    'Abrí un chat nuevo en la IA que uses.',
+    'Pegá las instrucciones del paso 1 y adjuntá los dos archivos del paso 2 en ese mismo mensaje.',
+    'Mandá a continuación el primer mensaje del paso 4.'],
+    nota: 'Así no queda guardado: en cada chat nuevo hay que volver a pegar las instrucciones y adjuntar los archivos.'}
+};
+const MENSAJE_INICIO = 'Hola. Quiero que seas mi entrenador. Es la primera vez que hablamos: haceme las preguntas que necesites y después proponeme el esquema de mi rutina. No me des la rutina para pegar hasta que yo apruebe el esquema.';
+const MENSAJE_INFORME = `Te paso el informe de la app. Analizalo según tus instrucciones y decime qué ajustarías, con el porqué de cada cambio.
+
+[pegá acá el informe: en la app, Historial > Copiar informe]`;

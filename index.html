@@ -1926,6 +1926,7 @@ Lo que no hay en su gimnasio figura en el informe, sección BIBLIOTECA Y GIMNASI
 ${filas.map(f=>f.map(celda).join(';')).join('\n')}
 `;
 }
+let kitIA = 'claude';   // claude | gemini | chatgpt | otra
 function abrirKit(){ abrirModal('kit', screenKit); }
 function screenKit(){
   const wrap = document.createElement('div');
@@ -1951,8 +1952,24 @@ function screenKit(){
   pasos.appendChild(paso(2, 'Los dos archivos', 'Las reglas del formato y la lista de ejercicios, con los que agregaste vos. Si sumás ejercicios propios, volvé a descargar la biblioteca.', [
     ['down', 'Reglas', bajar(ARCHIVO_REGLAS, ()=>REGLAS_ENTRENADOR)],
     ['down', 'Biblioteca', bajar(ARCHIVO_BIBLIOTECA, bibliotecaATexto)]]));
-  pasos.appendChild(paso(3, 'Cargalos en tu IA', 'Lo mejor es crear un espacio que quede guardado (un Project en Claude, un Gem en Gemini, un GPT en ChatGPT): pegás las instrucciones y subís los dos archivos. Si no, abrí un chat nuevo, pegá las instrucciones y adjuntá los dos archivos.'));
-  pasos.appendChild(paso(4, 'Pedile tu rutina', 'Te hace unas preguntas y te devuelve la rutina lista para pegar acá. Cada tanto, copiá el informe desde Historial y pasáselo para que la ajuste.'));
+  const p3 = paso(3, 'Dejalo armado en tu IA', 'Elegí cuál usás. Se hace una sola vez y queda guardado.');
+  const guia = el(`<div style="margin-top:10px"></div>`);
+  // se redibuja solo este bloque: así la pantalla no salta arriba al cambiar de IA
+  const pintarGuia = ()=>{
+    const g = GUIAS_IA[kitIA];
+    guia.innerHTML = '';
+    guia.appendChild(segmentado(Object.keys(GUIAS_IA).map(id=>[id, GUIAS_IA[id].nombre]), kitIA, id=>{ kitIA = id; pintarGuia(); }));
+    const lista = el(`<ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.45"></ol>`);
+    g.pasos.forEach(t=>lista.appendChild(el(`<li style="margin-bottom:6px">${esc(t)}</li>`)));
+    guia.appendChild(lista);
+    guia.appendChild(el(`<p class="muted" style="font-size:12px;margin-top:4px">${esc(g.nota)}</p>`));
+  };
+  pintarGuia();
+  p3.appendChild(guia);
+  pasos.appendChild(p3);
+  pasos.appendChild(paso(4, 'Hablale', 'El primer mensaje le pide tu rutina: te hace unas preguntas y te la devuelve lista para pegar acá. El otro es para cuando le pases tu informe (Historial > Copiar informe) y quieras que la ajuste.', [
+    ['copy', 'Primer mensaje', msg=>copiarTexto(MENSAJE_INICIO, msg, 'Primer mensaje copiado')],
+    ['copy', 'Para el informe', msg=>copiarTexto(MENSAJE_INFORME, msg, 'Mensaje copiado: pegale el informe abajo')]]));
   wrap.appendChild(pasos);
   return wrap;
 }
