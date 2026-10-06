@@ -19,7 +19,7 @@ Si todavía no conocés a la persona, antes de proponer nada preguntale todo jun
 6. Si quiere aeróbico: el mismo día que las pesas, en una rutina aparte (otro momento u otro día) o nada.
 7. Preferencias: ejercicios que le gustan o que no, músculos que quiere priorizar.
 Si deja algo en blanco o dice "no sé", recomendá vos con criterio y decí qué asumiste.
-No sos médico. Si cuenta un dolor fuerte, que no se va o que apareció por un golpe, decile que lo consulte con un profesional de la salud antes de entrenar esa zona, y no armes nada encima de ese dolor.
+No sos médico. Si cuenta un dolor fuerte, que no se va o que apareció por un golpe, decile que lo consulte con un profesional de la salud antes de entrenar esa zona. Mientras tanto podés armarle el resto del cuerpo, pero no pongas ningún ejercicio que cargue o doble la zona que duele, aunque insista.
 
 NADA ES FIJO
 Días por semana, división de los días, cantidad y tipo de bloques (fuerza, potencia, hipertrofia, descarga o la combinación que convenga), circuitos y rutinas aparte se deciden con los datos del seguimiento y la disponibilidad de la persona. Vos sugerís y recomendás con criterio; la persona decide.
@@ -49,11 +49,11 @@ REGLAS DE ENTREGA
 - Usá bloques separados: 1) la rutina (los días), 2) las rutinas aparte (si hay), 3) AJUSTE (si hay).
 - Nombres de ejercicio: copiá la columna "nombre" de la biblioteca tal cual. Si usás uno que no está, avisalo en el chat.
 - No uses los ejercicios que el informe lista en "No hay en mi gimnasio". Los "Ejercicios propios" usalos con su nombre exacto.
-- Poné 1 o 2 sustitutos (alt) por ejercicio, del mismo movimiento y sin repetir un movimiento ya usado ese día. Si la persona contó una molestia en la zona lumbar, que tengan carga lumbar igual o menor que el original.
+- Poné 1 o 2 sustitutos (alt) por ejercicio. También salen de la biblioteca: nombre exacto y la misma columna "movimiento" que el original, sin repetir un movimiento ya usado ese día. Si la persona contó una molestia en la zona lumbar, que tengan carga lumbar igual o menor que el original.
 - La línea PLAN va SOLO cuando proponés un plan nuevo, porque reinicia el plan a la semana 1. Para la rutina del bloque siguiente del mismo plan, no la pongas.
 - Calentamiento y aproximación los decidís vos: 1 o 2 en los ejercicios compuestos pesados, 0 en los de aislamiento.
 - En AJUSTE, el nombre tiene que ser exacto al de la sección RUTINA ACTUAL del informe.
-- Antes de entregar, revisá: formato exacto, nombres de la biblioteca y nada de texto dentro del bloque.
+- Antes de entregar, revisá renglón por renglón: formato exacto, nombres copiados de la biblioteca (los ejercicios y los alt) y nada de texto dentro del bloque.
 
 EJEMPLO DE ENTREGA (inicio de un plan nuevo)
 \`\`\`
@@ -208,34 +208,35 @@ Revisiones
 - Al cerrar un bloque o el plan: analizá el bloque completo y decidí si mantenés la estructura (días, series y reps) con ejercicios y cargas nuevas o si también la cambiás. Antes de decidir, preguntá si cambiaron sus tiempos o preferencias.
 `;
 
-// Cómo dejar armado el entrenador en cada IA. Los nombres de los botones son los de la ayuda oficial de cada una
-// (revisados en octubre de 2026); si alguna cambia su pantalla, se corrige acá.
+// Cómo dejar armado el entrenador en cada IA, en el orden en que se hace desde un celular. Antes de estos pasos la app
+// ya hizo descargar los dos archivos. Un paso puede traer lo que hay que llevar a la IA en ese momento: 'instrucciones'
+// o 'mensaje' (la app pone ahí el botón para copiar).
+// Los nombres de los botones son los de la ayuda oficial de cada IA (revisados en octubre de 2026).
 const GUIAS_IA = {
   claude: {nombre: 'Claude', pasos: [
-    'Abrí Claude (la app o claude.ai) y entrá a "Proyectos".',
-    'Tocá "Nuevo proyecto" y ponele un nombre, por ejemplo "Entrenador".',
-    'En las instrucciones del proyecto, pegá las instrucciones del paso 1.',
-    'En los archivos del proyecto (el conocimiento), subí los dos archivos del paso 2.',
-    'Abrí un chat dentro del proyecto y mandale el primer mensaje del paso 4.'],
-    nota: 'En Claude se llama Proyecto. Con la cuenta gratis se pueden crear hasta 5.'},
+    ['Abrí la app de Claude (o claude.ai), entrá a "Proyectos" y tocá "Nuevo proyecto". Ponele de nombre "Entrenador". Un proyecto es un lugar donde Claude guarda tus instrucciones y tus archivos.'],
+    ['Tocá este botón para copiar las instrucciones. En Claude, pegalas en las instrucciones del proyecto y guardá.', 'instrucciones'],
+    ['En el proyecto, agregá los dos archivos que descargaste: están en las descargas del celular.'],
+    ['Tocá este botón para copiar el primer mensaje. En Claude, abrí un chat dentro del proyecto (no un chat suelto), pegalo y envialo.', 'mensaje']],
+    nota: 'En Claude se llama Proyecto. Con la cuenta gratis alcanza.'},
   gemini: {nombre: 'Gemini', pasos: [
-    'Abrí gemini.google.com en el navegador, del celular o de la computadora. Los Gems se crean solo ahí; después la app de Gemini los usa.',
-    'Abrí el menú, entrá a "Gems" y tocá "Nueva Gem".',
-    'Ponele un nombre, por ejemplo "Entrenador", y en las instrucciones pegá las del paso 1.',
-    'En "Conocimiento", tocá "Agregar archivos" y subí los dos archivos del paso 2.',
-    'Tocá "Guardar". Después abrí tu Gem y mandale el primer mensaje del paso 4.'],
+    ['Abrí el navegador del celular (Chrome) y entrá a gemini.google.com. Tiene que ser ahí: la app de Gemini no deja crear Gems, solo usarlos.'],
+    ['Abrí el menú, entrá a "Gems" y tocá "Nueva Gem". Ponele de nombre "Entrenador". Un Gem es un asistente con tus instrucciones guardadas.'],
+    ['Tocá este botón para copiar las instrucciones. En Gemini, pegalas en las instrucciones del Gem.', 'instrucciones'],
+    ['En "Conocimiento", tocá "Agregar archivos" y elegí los dos que descargaste: están en las descargas del celular. Después tocá "Guardar".'],
+    ['Tocá este botón para copiar el primer mensaje. Abrí tu Gem, pegalo y envialo.', 'mensaje']],
     nota: 'En Gemini se llama Gem.'},
   chatgpt: {nombre: 'ChatGPT', pasos: [
-    'Abrí ChatGPT (la app o chatgpt.com) y, en el menú lateral, tocá "Nuevo proyecto". Ponele un nombre, por ejemplo "Entrenador".',
-    'Dentro del proyecto, abrí el menú de los tres puntos y entrá a "Configuración del proyecto": ahí pegá las instrucciones del paso 1.',
-    'Agregá al proyecto los dos archivos del paso 2.',
-    'Abrí un chat dentro del proyecto y mandale el primer mensaje del paso 4.'],
-    nota: 'En ChatGPT se llama Proyecto. Los "GPT" personalizados no se pueden crear con una cuenta personal. La cuenta gratis admite hasta 5 archivos por proyecto; acá son 2.'},
+    ['Abrí la app de ChatGPT (o chatgpt.com) y, en el menú lateral, tocá "Nuevo proyecto". Ponele de nombre "Entrenador". Un proyecto es un lugar donde ChatGPT guarda tus instrucciones y tus archivos.'],
+    ['Tocá este botón para copiar las instrucciones. En ChatGPT, dentro del proyecto, abrí el menú de los tres puntos, entrá a "Configuración del proyecto" y pegalas ahí.', 'instrucciones'],
+    ['Agregá al proyecto los dos archivos que descargaste: están en las descargas del celular.'],
+    ['Tocá este botón para copiar el primer mensaje. En ChatGPT, abrí un chat dentro del proyecto (no un chat suelto), pegalo y envialo.', 'mensaje']],
+    nota: 'En ChatGPT se llama Proyecto; no hace falta crear un "GPT". Con la cuenta gratis alcanza.'},
   otra: {nombre: 'Otra', pasos: [
-    'Abrí un chat nuevo en la IA que uses.',
-    'Pegá las instrucciones del paso 1 y adjuntá los dos archivos del paso 2 en ese mismo mensaje.',
-    'Mandá a continuación el primer mensaje del paso 4.'],
-    nota: 'Así no queda guardado: en cada chat nuevo hay que volver a pegar las instrucciones y adjuntar los archivos.'}
+    ['Abrí un chat nuevo en la IA que uses y adjuntá los dos archivos que descargaste: están en las descargas del celular.'],
+    ['Tocá este botón para copiar las instrucciones, pegalas en ese mismo mensaje y envialo.', 'instrucciones'],
+    ['Tocá este botón para copiar el primer mensaje, pegalo y envialo.', 'mensaje']],
+    nota: 'Con esta opción no queda guardado: hay que repetirlo en cada chat nuevo.'}
 };
 const MENSAJE_INICIO = 'Hola. Quiero que seas mi entrenador. Es la primera vez que hablamos: haceme las preguntas que necesites y después proponeme el esquema de mi rutina. No me des la rutina para pegar hasta que yo apruebe el esquema.';
 const MENSAJE_INFORME = `Te paso el informe de la app. Analizalo según tus instrucciones y decime qué ajustarías, con el porqué de cada cambio.

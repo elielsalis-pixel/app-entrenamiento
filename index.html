@@ -1901,7 +1901,6 @@ function screenSonidos(){
   return wrap;
 }
 /* ---------- kit del entrenador: lo que se le da a la IA (los textos están en entrenador.js) ---------- */
-const ARCHIVO_INSTRUCCIONES = 'instrucciones-del-entrenador.txt';
 const ARCHIVO_REGLAS = 'reglas-para-armar-rutinas.txt';
 const ARCHIVO_BIBLIOTECA = 'biblioteca-ejercicios.txt';
 // La biblioteca como tabla de texto: los ejercicios de la app más los propios, con el nombre exacto que hay que usar.
@@ -1932,44 +1931,40 @@ function screenKit(){
   const wrap = document.createElement('div');
   wrap.appendChild(botonVolver(cerrarModal));
   wrap.appendChild(el(`<h2 style="margin-bottom:6px">Tu entrenador</h2>`));
-  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">La IA que ya uses (Claude, Gemini, ChatGPT u otra) puede ser tu entrenador: te arma la rutina en el formato de esta app y analiza tus informes. Se prepara una sola vez.</p>`));
-  // acciones: [ícono, texto del botón, qué hace (recibe el renglón donde avisar que salió bien)]
-  const paso = (n, titulo, texto, acciones)=>{
-    const card = el(`<div class="card" style="padding:14px 16px"><p class="muted" style="font-size:12px;font-weight:600">PASO ${n}</p><p style="font-weight:600;margin:2px 0 4px">${esc(titulo)}</p><p class="secondary" style="font-size:13px">${esc(texto)}</p></div>`);
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">La IA que ya uses puede ser tu entrenador: te arma la rutina en el formato de esta app y analiza tus informes. Se prepara una sola vez. Vas a ir y venir entre esta app y la de tu IA: tocá el botón acá, hacé el paso allá y volvé por el siguiente.</p>`));
+  const bajar = (nombre, texto)=>msg=>{ descargarArchivo(nombre, texto(), 'text/plain;charset=utf-8'); msg.textContent = `Se descargó ${nombre}`; };
+  // lo que se lleva a la IA en cada paso: [ícono, texto del botón, qué hace (recibe el renglón donde avisar que salió bien)]
+  const ACCIONES = {
+    instrucciones: [['copy', 'Copiar instrucciones', msg=>copiarTexto(PROMPT_ENTRENADOR, msg, 'Instrucciones copiadas')]],
+    mensaje: [['copy', 'Copiar primer mensaje', msg=>copiarTexto(MENSAJE_INICIO, msg, 'Primer mensaje copiado')]]
+  };
+  const tarjeta = (rotulo, texto, acciones)=>{
+    const card = el(`<div class="card" style="padding:14px 16px"><p class="muted" style="font-size:12px;font-weight:600">${esc(rotulo)}</p><p style="font-size:14px;line-height:1.45;margin-top:4px">${esc(texto)}</p></div>`);
     if(!acciones) return card;
-    const fila = el(`<div class="fila2" style="margin-top:10px"></div>`);
+    const fila = el(`<div class="${acciones.length > 1 ? 'fila2' : ''}" style="margin-top:10px"></div>`);
     const msg = el(`<div style="font-size:12px;color:var(--success);text-align:center;margin-top:8px"></div>`);
-    acciones.forEach(([icono, rotulo, hacer])=>fila.appendChild(boton(`${icon(icono)} ${rotulo}`, 'btn-full', ()=>hacer(msg))));
+    acciones.forEach(([icono, texto, hacer])=>fila.appendChild(boton(`${icon(icono)} ${texto}`, 'btn-full', ()=>hacer(msg))));
     card.appendChild(fila); card.appendChild(msg);
     return card;
   };
-  const bajar = (nombre, texto)=>msg=>{ descargarArchivo(nombre, texto(), 'text/plain;charset=utf-8'); msg.textContent = `Se descargó ${nombre}`; };
   const pasos = el(`<div class="pila"></div>`);
-
-  pasos.appendChild(paso(1, 'Las instrucciones', 'Le dicen a la IA cómo trabajar con vos y con la app.', [
-    ['copy', 'Copiar', msg=>copiarTexto(PROMPT_ENTRENADOR, msg, 'Instrucciones copiadas')],
-    ['down', 'Descargar', bajar(ARCHIVO_INSTRUCCIONES, ()=>PROMPT_ENTRENADOR)]]));
-  pasos.appendChild(paso(2, 'Los dos archivos', 'Las reglas del formato y la lista de ejercicios, con los que agregaste vos. Si sumás ejercicios propios, volvé a descargar la biblioteca.', [
-    ['down', 'Reglas', bajar(ARCHIVO_REGLAS, ()=>REGLAS_ENTRENADOR)],
-    ['down', 'Biblioteca', bajar(ARCHIVO_BIBLIOTECA, bibliotecaATexto)]]));
-  const p3 = paso(3, 'Dejalo armado en tu IA', 'Elegí cuál usás. Se hace una sola vez y queda guardado.');
-  const guia = el(`<div style="margin-top:10px"></div>`);
-  // se redibuja solo este bloque: así la pantalla no salta arriba al cambiar de IA
-  const pintarGuia = ()=>{
-    const g = GUIAS_IA[kitIA];
-    guia.innerHTML = '';
-    guia.appendChild(segmentado(Object.keys(GUIAS_IA).map(id=>[id, GUIAS_IA[id].nombre]), kitIA, id=>{ kitIA = id; pintarGuia(); }));
-    const lista = el(`<ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.45"></ol>`);
-    g.pasos.forEach(t=>lista.appendChild(el(`<li style="margin-bottom:6px">${esc(t)}</li>`)));
-    guia.appendChild(lista);
-    guia.appendChild(el(`<p class="muted" style="font-size:12px;margin-top:4px">${esc(g.nota)}</p>`));
+  // al cambiar de IA se redibujan solo los pasos: así la pantalla no salta arriba
+  const pintar = ()=>{
+    const guia = GUIAS_IA[kitIA];
+    pasos.innerHTML = '';
+    const elegir = tarjeta('PASO 1', '¿Qué IA usás?');
+    elegir.appendChild(segmentado(Object.keys(GUIAS_IA).map(id=>[id, GUIAS_IA[id].nombre]), kitIA, id=>{ kitIA = id; pintar(); }));
+    elegir.lastChild.style.cssText = 'margin:10px 0 0';
+    elegir.appendChild(el(`<p class="muted" style="font-size:12px;margin-top:8px">${esc(guia.nota)}</p>`));
+    pasos.appendChild(elegir);
+    // los archivos se bajan antes de ir a la IA: así no hay que salir a buscarlos con el proyecto a medio crear
+    pasos.appendChild(tarjeta('PASO 2', 'Descargá estos dos archivos: las reglas del formato y la lista de ejercicios. Quedan en las descargas del celular.', [
+      ['down', 'Reglas', bajar(ARCHIVO_REGLAS, ()=>REGLAS_ENTRENADOR)], ['down', 'Biblioteca', bajar(ARCHIVO_BIBLIOTECA, bibliotecaATexto)]]));
+    guia.pasos.forEach(([texto, accion], i)=>pasos.appendChild(tarjeta(`PASO ${i+3}`, texto, ACCIONES[accion])));
+    pasos.appendChild(tarjeta('MÁS ADELANTE', 'La IA te hace unas preguntas y te da la rutina lista para pegar acá. Para que la ajuste más adelante, mandale este mensaje y, debajo, tu informe (Historial > Copiar informe). Si agregás ejercicios propios, descargá de nuevo la biblioteca y cambiala por la vieja en tu IA.', [
+      ['copy', 'Copiar mensaje para el informe', msg=>copiarTexto(MENSAJE_INFORME, msg, 'Mensaje copiado: pegale el informe abajo')]]));
   };
-  pintarGuia();
-  p3.appendChild(guia);
-  pasos.appendChild(p3);
-  pasos.appendChild(paso(4, 'Hablale', 'El primer mensaje le pide tu rutina: te hace unas preguntas y te la devuelve lista para pegar acá. El otro es para cuando le pases tu informe (Historial > Copiar informe) y quieras que la ajuste.', [
-    ['copy', 'Primer mensaje', msg=>copiarTexto(MENSAJE_INICIO, msg, 'Primer mensaje copiado')],
-    ['copy', 'Para el informe', msg=>copiarTexto(MENSAJE_INFORME, msg, 'Mensaje copiado: pegale el informe abajo')]]));
+  pintar();
   wrap.appendChild(pasos);
   return wrap;
 }
