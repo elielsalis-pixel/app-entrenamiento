@@ -604,6 +604,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
       && state.activeSession.aparte===r.id && state.activeSession.dayName==='Cardio + Abs' && !('turno' in state.activeSession)
       && state.lastResumen.aparte===r.id;
   }, viejo));
+  ok('migración: queda guardado en el celular el estado anterior, tal cual estaba', await ev(()=>{ const a = JSON.parse(localStorage.getItem('entrenoState_antes_de_aparte')); return a.routineTarde.name==='Cardio + Abs' && a.historyTarde.length===1 && a.historyTarde[0].turno==='tarde' && !('rutinasAparte' in a); }));
   await ev(()=>{ setTab('sesion'); });
   ok('migración: la sesión de tarde que estaba abierta sigue y se puede finalizar', await page.isVisible('.top:has-text("Cardio + Abs")') && await ev(()=>{ finalizarSesion(); return state.historyAparte.length===2 && state.historyAparte[1].dayName==='Cardio + Abs' && !state.activeSession; }));
   await ev(()=>{ setSessionView('activa'); setTab('inicio'); });

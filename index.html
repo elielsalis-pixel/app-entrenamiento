@@ -401,6 +401,12 @@ function migrarTurnoTarde(s){
   delete s.routineTarde; delete s.historyTarde;
   return true;
 }
+// Antes de convertir se guarda en este celular el estado tal cual estaba: es la vuelta atrás si algo saliera mal.
+const CLAVE_ANTES_DE_APARTE = 'entrenoState_antes_de_aparte';
+if('routineTarde' in state || 'historyTarde' in state){
+  try{ localStorage.setItem(CLAVE_ANTES_DE_APARTE, JSON.stringify(state)); }
+  catch(e){ console.warn('Sin lugar para guardar el estado anterior; la conversión sigue igual.', e); }
+}
 if(migrarTurnoTarde(state)) saveState();
 state.rutinasAparte = state.rutinasAparte || [];
 state.historyAparte = state.historyAparte || [];
