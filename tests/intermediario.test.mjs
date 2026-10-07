@@ -18,4 +18,14 @@ r=await pedir('GET',O); ok('GET: 405', r[0]===405);
 r=await pedir('POST',O,'no es json'); ok('cuerpo ilegible: 400', r[0]===400 && llamadas.length===n);
 r=await pedir('POST',O,JSON.stringify({code:5})); ok('pedido inválido: 400', r[0]===400 && llamadas.length===n);
 r=await pedir('POST',O,JSON.stringify({code:'c'}),{}); ok('sin clave cargada: 500 y lo dice', r[0]===500 && r[1].error==='falta_configurar');
+{ // Google no acepta 'postmessage' como destino: se canjea con el origen de la app
+  const vistas=[]; const antes=globalThis.fetch;
+  globalThis.fetch=async(u,o)=>{ const p=new URLSearchParams(String(o.body)); vistas.push(p.get('redirect_uri')); return p.get('redirect_uri')==='postmessage' ? new Response(JSON.stringify({error:'redirect_uri_mismatch'}),{status:400}) : new Response(JSON.stringify({access_token:'a',expires_in:3599,scope:'s',refresh_token:'r'}),{status:200}); };
+  r=await pedir('POST',O,JSON.stringify({code:'c2'}));
+  ok('si Google rechaza el primer destino del código, prueba con el origen de la app', r[0]===200 && r[1].refresh_token==='r' && vistas.join()==='postmessage,https://elielsalis-pixel.github.io');
+  globalThis.fetch=async()=>new Response(JSON.stringify({error:'redirect_uri_mismatch'}),{status:400});
+  r=await pedir('POST',O,JSON.stringify({code:'c3'}));
+  ok('si rechaza los dos, devuelve el rechazo', r[0]===400 && r[1].error==='redirect_uri_mismatch');
+  globalThis.fetch=antes;
+}
 if(fallas) process.exit(1);
