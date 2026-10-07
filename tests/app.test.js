@@ -931,8 +931,20 @@ calentar bien antes`;
     const ahora = ()=>new Date(Date.UTC(2026, 9, 7, 3, 0, D.reloj++)).toISOString();
     const cors = {'access-control-allow-origin':'*', 'access-control-allow-headers':'*', 'access-control-allow-methods':'GET,POST,PATCH,DELETE,OPTIONS'};
     await pd.route('https://accounts.google.com/gsi/client', r=>r.fulfill({contentType:'text/javascript', body:`window.google={accounts:{oauth2:{
-      initTokenClient(cfg){ return {requestAccessToken(){ window.__ventanas=(window.__ventanas||0)+1; setTimeout(()=>window.__falla ? cfg.error_callback({type:window.__falla}) : cfg.callback({access_token:'tok-1', expires_in:3599, scope: window.__permiso===undefined ? cfg.scope : window.__permiso}), 10); }}; },
+      initCodeClient(cfg){ return {requestCode(){ window.__ventanas=(window.__ventanas||0)+1; setTimeout(()=>window.__falla ? cfg.error_callback({type:window.__falla}) : cfg.callback({code:'cod-1', scope: window.__permiso===undefined ? cfg.scope : window.__permiso}), 10); }}; },
       hasGrantedAllScopes(r, s){ return String(r.scope||'').split(' ').includes(s); } }}};`}));
+    // el intermediario de mentira: canjea el código de la ventana por un permiso duradero y renueva el acceso con ese permiso
+    const I = {canjes:0, renovaciones:0, responde:'bien', bajas:[]};
+    await pd.route(await page.evaluate(()=>DRIVE_INTERMEDIARIO), async r=>{
+      const q = r.request();
+      if(q.method()==='OPTIONS') return r.fulfill({status:204, headers:cors});
+      const b = JSON.parse(q.postData()), json = (o, status)=>r.fulfill({status, headers:cors, contentType:'application/json', body:JSON.stringify(o)});
+      if(I.responde==='caido') return json({error:'caido'}, 503);
+      if(b.code==='cod-1'){ I.canjes++; return json({access_token:'tok-1', expires_in:3599, refresh_token:'perm-1', scope:'s'}, 200); }
+      if(b.refresh_token==='perm-1' && I.responde==='bien'){ I.renovaciones++; return json({access_token:'tok-1', expires_in:3599, scope:'s'}, 200); }
+      return json({error:'invalid_grant', error_description:'Token has been expired or revoked.'}, 400);
+    });
+    await pd.route('https://oauth2.googleapis.com/revoke', r=>{ I.bajas.push(r.request().postData()); return r.fulfill({status:200, headers:cors, contentType:'application/json', body:'{}'}); });
     await pd.route('https://www.googleapis.com/**', async r=>{
       const q = r.request(), u = new (require('url').URL)(q.url()), m = q.method();
       if(m==='OPTIONS') return r.fulfill({status:204, headers:cors});
@@ -983,6 +995,7 @@ calentar bien antes`;
     ok('drive: una app vacía no sube copia ni rutina', hijos('Copia de seguridad')==='' && hijos('Rutinas')==='');
     ok('drive: después de entrar abre el kit, que ya habla de Drive', await pd.isVisible('h2:has-text("Tu entrenador")') && await pd.isVisible('.card:has-text("PASO 2"):has-text("ya están en tu Google Drive, en la carpeta Entreno")') && await pd.isVisible('.card:has-text("PASO 5"):has-text("están en tu Google Drive, en la carpeta Entreno")') && !(await pd.textContent('#screen')).includes('{archivos}'));
     ok('drive: recuerda la cuenta y la carpeta en el celular', await pd.evaluate(id=>{ const d=ajustesDrive(); return d.raiz===id && d.cuenta==='prueba@gmail.com' && !!d.rutinas && !!d.informes && !!d.copia && state.bienvenidaVista===true; }, raiz.id));
+    ok('drive: el ingreso canjea el código por un permiso duradero, que queda en el celular y fuera de la copia', I.canjes===1 && I.renovaciones===0 && await pd.evaluate(()=>ajustesDrive().permiso==='perm-1' && !JSON.stringify(armarCopia()).includes('perm-1')));
     await pd.click('text=Volver');
     ok('drive: al volver del kit sigue la carga de la rutina', await pd.isVisible('text=Cargá tu rutina'));
 
@@ -1010,20 +1023,38 @@ calentar bien antes`;
     ok('drive: con el acceso vigente no vuelve a abrir la ventana de Google', (await ventanas())===v0 && D.sinPermiso===0);
     ok('drive: la copia semanal no se pisa con las sesiones de la semana', JSON.parse(archivo(`copia-semana-${lunes}.json`).texto).history.length===0 && D.items.filter(i=>i.name.startsWith('copia-semana-')).length===1);
 
-    // acceso vencido (la app se volvió a abrir) y cierre sin toque: queda pendiente y se sube con el próximo toque
+    // acceso vencido (la app se volvió a abrir): se renueva solo, sin ventana, incluso en un cierre sin toque
     await pd.evaluate(()=>{ setSessionView('activa'); setTab('inicio'); });
     await pd.reload(); await pd.waitForTimeout(400);
     const v1 = await ventanas();
     await sesionHecha(false);
-    await pd.waitForTimeout(300);
-    ok('drive: sin toque y con el acceso vencido no abre la ventana y lo deja pendiente', (await ventanas())===v1 && copiaEnDrive().history.length===1 && await pd.evaluate(()=>ajustesDrive().pendiente===true && state.history.length===2));
-    ok('drive: Inicio avisa que hay cambios sin guardar', await pd.isVisible('.banner:has-text("Hay cambios sin guardar en Google Drive")'));
-    await pd.click('.banner:has-text("Hay cambios sin guardar en Google Drive")');
     await quieto();
-    ok('drive: el aviso guarda con un toque', copiaEnDrive().history.length===2 && (await ventanas())===v1+1 && await pd.evaluate(()=>!ajustesDrive().pendiente) && !(await pd.isVisible('.banner:has-text("Hay cambios sin guardar")')));
+    ok('drive: con el acceso vencido lo renueva solo, sin abrir la ventana, y guarda aunque no haya toque', (await ventanas())===v1 && I.renovaciones===1 && copiaEnDrive().history.length===2 && await pd.evaluate(()=>!ajustesDrive().pendiente && drive.error==='') && !(await pd.isVisible('.banner:has-text("sin guardar")')));
     await sesionHecha(false);
     await quieto();
-    ok('drive: con el acceso vigente el cierre automático también guarda', copiaEnDrive().history.length===3 && (await ventanas())===v1+1);
+    ok('drive: con el acceso vigente no vuelve a pedirle nada al intermediario', copiaEnDrive().history.length===3 && I.renovaciones===1 && (await ventanas())===v1);
+
+    // el intermediario no responde: no se pierde el permiso, queda pendiente y se guarda cuando vuelve
+    await pd.reload(); await pd.waitForTimeout(400);
+    I.responde = 'caido';
+    await sesionHecha(false);
+    await quieto();
+    ok('drive: si el intermediario no responde queda pendiente, avisa y conserva el permiso', copiaEnDrive().history.length===3 && (await ventanas())===v1 && await pd.evaluate(()=>ajustesDrive().pendiente===true && ajustesDrive().permiso==='perm-1' && state.history.length===4) && await pd.isVisible('.banner:has-text("No se pudo renovar el acceso a Google")'));
+    I.responde = 'bien';
+    await pd.click('.banner:has-text("No se pudo renovar el acceso a Google")');
+    await quieto();
+    ok('drive: cuando vuelve, el aviso guarda con un toque y sin ventana', copiaEnDrive().history.length===4 && (await ventanas())===v1 && I.renovaciones===2 && await pd.evaluate(()=>!ajustesDrive().pendiente) && !(await pd.isVisible('.banner:has-text("No se pudo")')));
+
+    // Google dio de baja el permiso: sin toque no abre nada y queda pendiente; con un toque se vuelve a entrar
+    await pd.reload(); await pd.waitForTimeout(400);
+    I.responde = 'revocado';
+    await sesionHecha(false);
+    await quieto();
+    ok('drive: con el permiso dado de baja y sin toque no abre la ventana y lo deja pendiente', (await ventanas())===v1 && copiaEnDrive().history.length===4 && await pd.evaluate(()=>ajustesDrive().pendiente===true && !ajustesDrive().permiso && state.history.length===5) && await pd.isVisible('.banner:has-text("Google pide que vuelvas a entrar con tu cuenta")'));
+    I.responde = 'bien';
+    await pd.click('.banner:has-text("Google pide que vuelvas a entrar con tu cuenta")');
+    await quieto();
+    ok('drive: el aviso vuelve a entrar con un toque y guarda', copiaEnDrive().history.length===5 && (await ventanas())===v1+1 && I.canjes===2 && await pd.evaluate(()=>!ajustesDrive().pendiente && ajustesDrive().permiso==='perm-1'));
 
     // informe, ejercicios propios y copias
     await pd.evaluate(()=>{ state.bibliotecaPropia=[{id:'propio-9', nombre:'Remo Hammer casero', alias:['remo hammer casero'], patron:'tiron_h', principal:['Dorsales'], secundarios:[], equipo:'Máquina', tipo:'Propio', nivel:'—', lumbar:'baja', medida:'kg+reps', mecanica:'', fotos:[], propio:true}]; saveState(); setTab('historial'); });
@@ -1055,9 +1086,9 @@ calentar bien antes`;
     await pd.waitForSelector('h2:has-text("Copias en Google Drive")', {timeout:8000});
     ok('drive: en un celular nuevo ofrece recuperar la copia en vez del kit', await pd.isVisible('text=Encontré una copia tuya en Google Drive') && await pd.isVisible('.item:has-text("Copia actual")') && !(await pd.isVisible('button:has-text("Quedarme con lo de este celular")')) && archivo('copia-actual.json').texto===copiaAntes);
     await pd.locator('.item:has-text("Copia actual") button:has-text("Restaurar")').click();
-    await pd.waitForFunction(()=>typeof state!=='undefined' && state.history && state.history.length===3 && document.querySelector('#tabbar button'), null, {timeout:8000});
+    await pd.waitForFunction(()=>typeof state!=='undefined' && state.history && state.history.length===5 && document.querySelector('#tabbar button'), null, {timeout:8000});
     await pd.waitForTimeout(400);
-    ok('drive: restaurar trae la rutina y el historial', await pd.evaluate(()=>state.routine.days.length===5 && state.history.length===3 && (state.bibliotecaPropia||[]).length===1 && driveActivo()) && await pd.isVisible('h1:has-text("Tren superior")'));
+    ok('drive: restaurar trae la rutina y el historial', await pd.evaluate(()=>state.routine.days.length===5 && state.history.length===5 && (state.bibliotecaPropia||[]).length===1 && driveActivo()) && await pd.isVisible('h1:has-text("Push")'));
     await pd.evaluate(()=>{ sincronizarDrive(true); }); await quieto();
     ok('drive: después de restaurar sigue guardando sin avisos falsos', await pd.evaluate(()=>drive.ajena===null && drive.error==='') && !(await pd.isVisible('.banner:has-text("no salió de este celular")')));
 
@@ -1065,19 +1096,21 @@ calentar bien antes`;
     const deOtro = archivo('copia-actual.json'); deOtro.texto = JSON.stringify({...JSON.parse(deOtro.texto), marca:'otro celular'}); deOtro.modificado = ahora();
     await sesionHecha(true);
     await quieto();
-    ok('drive: una copia de otro celular no se pisa', copiaEnDrive().marca==='otro celular' && await pd.evaluate(()=>!!drive.ajena && state.history.length===4));
+    ok('drive: una copia de otro celular no se pisa', copiaEnDrive().marca==='otro celular' && await pd.evaluate(()=>!!drive.ajena && state.history.length===6));
     await pd.evaluate(()=>render());
     ok('drive: Inicio avisa que hay una copia que no salió de este celular', await pd.isVisible('.banner:has-text("En Google Drive hay una copia que no salió de este celular")'));
     await pd.click('.banner:has-text("En Google Drive hay una copia que no salió de este celular")');
     await pd.waitForSelector('h2:has-text("Copias en Google Drive")', {timeout:8000});
     await pd.click('button:has-text("Quedarme con lo de este celular")');
     await quieto();
-    ok('drive: al elegir este celular, sube lo de acá', copiaEnDrive().history.length===4 && !copiaEnDrive().marca && await pd.evaluate(()=>drive.ajena===null));
+    ok('drive: al elegir este celular, sube lo de acá', copiaEnDrive().history.length===6 && !copiaEnDrive().marca && await pd.evaluate(()=>drive.ajena===null));
 
     await pd.evaluate(()=>setTab('ajustes'));
     const antes = D.items.length;
     await pd.click('button:has-text("Desconectar de este celular")');
+    await pd.waitForTimeout(200);
     ok('drive: desconectar deja la carpeta en Drive y ofrece conectar de nuevo', await pd.isVisible('button:has-text("Conectar Google Drive")') && await pd.evaluate(()=>!driveActivo()) && D.items.length===antes);
+    ok('drive: desconectar da de baja el permiso duradero en Google y lo borra del celular', I.bajas.join()==='token=perm-1' && await pd.evaluate(()=>!ajustesDrive().permiso));
     await pd.click('button:has-text("Conectar Google Drive")');
     await pd.waitForFunction(()=>driveActivo() && !drive.ocupado, null, {timeout:8000});
     ok('drive: al reconectar reencuentra la misma carpeta y no pisa la copia sin preguntar', await pd.evaluate(id=>ajustesDrive().raiz===id && !!drive.ajena, raiz.id) && D.items.filter(i=>i.carpeta).length===4 && D.items.filter(i=>i.name==='copia-actual.json').length===1);

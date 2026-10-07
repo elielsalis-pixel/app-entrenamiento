@@ -2332,6 +2332,9 @@ function screenKit(){
 // Identificador público de la app ante Google. El permiso pedido solo alcanza a los archivos que la app misma crea.
 const DRIVE_CLIENT_ID = '739404554059-2elvpkvd25oaj1e69ufm1nmsr8sbkde6.apps.googleusercontent.com';
 const DRIVE_PERMISO = 'https://www.googleapis.com/auth/drive.file';
+// Intermediario (herramientas/intermediario/worker.mjs): canjea y renueva el acceso con la clave secreta de la app, que no puede
+// estar en el celular. Gracias a eso la ventana de Google aparece solo la primera vez. No guarda nada.
+const DRIVE_INTERMEDIARIO = 'https://entreno-acceso.elielsalis.workers.dev/';
 const DRIVE_RAIZ = 'Entreno';
 const DRIVE_CARPETAS = {rutinas: 'Rutinas', informes: 'Informes', copia: 'Copia de seguridad'};
 const TIPO_CARPETA = 'application/vnd.google-apps.folder';
@@ -2347,8 +2350,9 @@ const drive = {
   ajena: null,         // copia que está en Drive y no subió este celular: no se pisa sin preguntar
   copias: []           // lo último listado para la pantalla de copias
 };
-// En este celular se recuerda la carpeta, la cuenta y qué fue lo último que se subió de cada cosa:
-// {raiz, rutinas, informes, copia, cuenta, kit, kitSubido, rutinaSubida, copiaSubida, estadoSubido, mediaSubida, semanaSubida, pendiente, ultima}
+// En este celular se recuerda la carpeta, la cuenta, el permiso duradero de Google y qué fue lo último que se subió de cada cosa:
+// {raiz, rutinas, informes, copia, cuenta, permiso, kit, kitSubido, rutinaSubida, copiaSubida, estadoSubido, mediaSubida, semanaSubida, pendiente, ultima}
+// El permiso solo alcanza a la carpeta Entreno y no viaja en las copias de seguridad.
 function ajustesDrive(){
   try{ return JSON.parse(localStorage.getItem('entrenoDrive')) || {}; }
   catch(e){ return {}; }   // ajustes ilegibles: se arranca sin Drive y el usuario lo vuelve a conectar
@@ -2367,6 +2371,14 @@ function cargarGoogle(){
   });
   return googleCargando;
 }
+// {ok, estado, ...lo que respondió}. Si no se llega al intermediario, lanza un error que se le puede mostrar al usuario.
+async function pedirAlIntermediario(datos){
+  let r;
+  try{ r = await fetch(DRIVE_INTERMEDIARIO, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(datos)}); }
+  catch(e){ throw new Error('No se pudo renovar el acceso a Google. Revisá la conexión y probá de nuevo.'); }
+  const d = await r.json().catch(()=>({}));   // una respuesta sin detalle legible se informa con su código
+  return {...d, ok: r.ok, estado: r.status};
+}
 // La ventana de Google solo se abre si se la pide en el mismo toque: por eso el ingreso se deja cargado al mostrar el botón.
 let googlePrecargado = false;
 function precargarGoogle(){
@@ -2378,6 +2390,8 @@ function adaptadorGoogleDrive(){
   const API = 'https://www.googleapis.com/drive/v3', SUBIDA = 'https://www.googleapis.com/upload/drive/v3';
   const CAMPOS = 'id,name,modifiedTime';
   let token = null, vence = 0;
+  const vigente = ()=>!!token && Date.now() < vence;
+  const recibir = r=>{ token = r.access_token; vence = Date.now() + (r.expires_in - 60) * 1000; };
   const responder = async(url, opciones = {})=>{
     const r = await fetch(url, {...opciones, headers: {...opciones.headers, Authorization: 'Bearer ' + token}});
     if(!r.ok){
@@ -2390,22 +2404,42 @@ function adaptadorGoogleDrive(){
   const ficha = f=>({id: f.id, nombre: f.name, modificado: f.modifiedTime});
   const MOTIVOS = {popup_closed: 'Cerraste la ventana de Google antes de terminar.', popup_failed_to_open: 'El navegador bloqueó la ventana de Google. Tocá de nuevo.'};
   return {
-    accesoVigente: ()=>!!token && Date.now() < vence,
-    // el acceso dura cerca de una hora; mientras sirve no se vuelve a pedir
-    pedirAcceso: async()=>{
-      if(token && Date.now() < vence) return;
+    // se puede conseguir el acceso sin abrir la ventana de Google: sigue vigente, o hay permiso duradero para renovarlo
+    accesoSinVentana: ()=>vigente() || !!ajustesDrive().permiso,
+    // El acceso dura cerca de una hora. Vencido, se renueva solo con el permiso duradero; la ventana de Google se abre
+    // únicamente si no hay permiso (primera vez, celular nuevo) o si Google lo dio de baja, y solo si conVentana.
+    pedirAcceso: async(conVentana)=>{
+      if(vigente()) return;
+      const permiso = ajustesDrive().permiso;
+      if(permiso){
+        const r = await pedirAlIntermediario({refresh_token: permiso});
+        if(r.ok) return recibir(r);
+        if(r.error!=='invalid_grant') throw new Error(`No se pudo renovar el acceso a Google (${r.error || r.estado}). Probá de nuevo en un rato.`);
+        guardarAjustesDrive({permiso: null});   // Google dio de baja el permiso (lo quitaste de tu cuenta, o pasó mucho tiempo sin uso)
+      }
+      if(!conVentana) throw new Error('Google pide que vuelvas a entrar con tu cuenta.');
       await cargarGoogle();
-      await new Promise((res, rej)=>{
-        google.accounts.oauth2.initTokenClient({client_id: DRIVE_CLIENT_ID, scope: DRIVE_PERMISO,
+      const codigo = await new Promise((res, rej)=>{
+        google.accounts.oauth2.initCodeClient({client_id: DRIVE_CLIENT_ID, scope: DRIVE_PERMISO, ux_mode: 'popup',
           callback: r=>{
             if(r.error) return rej(new Error(r.error_description || r.error));
             if(!google.accounts.oauth2.hasGrantedAllScopes(r, DRIVE_PERMISO)) return rej(new Error('Falta el permiso para guardar en Drive: volvé a entrar y dejá marcada esa casilla.'));
-            token = r.access_token; vence = Date.now() + (r.expires_in - 60) * 1000;
-            res();
+            res(r.code);
           },
           error_callback: e=>rej(new Error(MOTIVOS[e.type] || e.message || e.type))
-        }).requestAccessToken();
+        }).requestCode();
       });
+      const r = await pedirAlIntermediario({code: codigo});
+      if(!r.ok) throw new Error(`Google no completó el ingreso (${r.error_description || r.error || r.estado}).`);
+      recibir(r);
+      if(r.refresh_token) guardarAjustesDrive({permiso: r.refresh_token});
+    },
+    // al desconectar, el permiso duradero se da de baja en Google (si no se llega, igual se borra de este celular)
+    soltarPermiso: ()=>{
+      const permiso = ajustesDrive().permiso;
+      token = null;
+      if(permiso) fetch('https://oauth2.googleapis.com/revoke', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'token=' + encodeURIComponent(permiso)})
+        .catch(e=>console.warn('No se pudo dar de baja el permiso en Google; se puede quitar desde la cuenta de Google.', e));
     },
     cuenta: async()=>(await pedir(`${API}/about?fields=user(emailAddress)`)).user.emailAddress,
     // el más nuevo con ese nombre: {id, nombre, modificado}, o null
@@ -2502,17 +2536,17 @@ async function subirCopiaSemanal(texto){
   guardarAjustesDrive({semanaSubida: nombre});
 }
 // Sube a Drive lo que haya cambiado desde la última vez.
-// conToque: viene de un toque del usuario. Google solo renueva el acceso desde un toque; sin él y con el acceso vencido,
+// conToque: viene de un toque del usuario. La ventana de Google solo se puede abrir desde un toque; si hace falta y no lo hay,
 // queda anotado como pendiente y se sube en el próximo toque que guarde.
 // armar: crea (o reencuentra) la carpeta con sus subcarpetas. informe: texto del informe recién copiado.
 async function sincronizarDrive(conToque, {armar, informe} = {}){
   if(drive.ocupado || (!armar && !driveActivo())) return;
   const a = adaptadorDrive();
-  if(!conToque && !a.accesoVigente()){ guardarAjustesDrive({pendiente: true}); return refrescarDrive(); }
+  if(!conToque && !a.accesoSinVentana()){ guardarAjustesDrive({pendiente: true}); return refrescarDrive(); }
   drive.ocupado = true; drive.error = '';
   refrescarDrive();
   try{
-    await a.pedirAcceso();
+    await a.pedirAcceso(conToque);
     if(armar){
       const carpetas = {raiz: await carpetaDrive(DRIVE_RAIZ, null)};
       for(const k of Object.keys(DRIVE_CARPETAS)) carpetas[k] = await carpetaDrive(DRIVE_CARPETAS[k], carpetas.raiz);
@@ -2532,12 +2566,12 @@ async function sincronizarDrive(conToque, {armar, informe} = {}){
 }
 // Tiene que arrancar desde un toque: Google no abre su ventana de otra forma.
 function conectarDrive(){ return sincronizarDrive(true, {armar: true}); }
-function desconectarDrive(){ localStorage.removeItem('entrenoDrive'); drive.error = ''; drive.ajena = null; render(); }
+function desconectarDrive(){ adaptadorDrive().soltarPermiso(); localStorage.removeItem('entrenoDrive'); drive.error = ''; drive.ajena = null; render(); }
 function refrescarDrive(){ redibujarSiNoInterrumpe(); }
 async function abrirCopiasDrive(){
   try{
     const a = adaptadorDrive();
-    await a.pedirAcceso();
+    await a.pedirAcceso(true);
     drive.copias = (await a.listar(ajustesDrive().copia)).filter(f=>f.nombre===ARCHIVO_COPIA || f.nombre.startsWith(PREFIJO_SEMANAL));
     abrirModal('drive', screenCopiasDrive);
   } catch(e){
@@ -2547,7 +2581,7 @@ async function abrirCopiasDrive(){
 }
 async function restaurarDeDrive(copia){
   const a = adaptadorDrive(), d = ajustesDrive();
-  await a.pedirAcceso();
+  await a.pedirAcceso(true);
   const estado = JSON.parse(await a.leer(copia.id));
   const fotos = await a.buscar(ARCHIVO_MEDIA, d.copia);
   await restaurarCopia({app: 'entreno', state: estado, media: fotos ? JSON.parse(await a.leer(fotos.id)) : media});
