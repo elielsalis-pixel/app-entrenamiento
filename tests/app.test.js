@@ -47,6 +47,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await page.reload(); await page.waitForTimeout(300);
   ok('vacía: pide cargar rutina', await visible('Cargá tu rutina'));
   ok('vacía: botón restaurar copia', await page.isVisible('button:has-text("Restaurar")'));
+  ok('vacía: la copia vieja de Firebase ya no se le ofrece a quien nunca la activó', !(await visible('Recuperar mi copia de la nube')) && await ev(()=>!nubeDisponible() && nube.error===''));
   // --- kit del entrenador: instrucciones y archivos para la IA
   await tocar('text=Armar tu entrenador con una IA');
   ok('kit: primero se elige la IA, después se bajan los archivos y siguen sus pasos en orden', await ev(()=>[...document.querySelectorAll('#screen .card')].map(c=>c.firstChild.textContent).join()==='PASO 1,PASO 2,PASO 3,PASO 4,PASO 5,PASO 6,MÁS ADELANTE') && await page.isVisible('.card:has-text("PASO 1") [role="tab"]:has-text("Gemini")') && await page.isVisible('.card:has-text("PASO 3"):has-text("Nuevo proyecto")'));
@@ -764,7 +765,13 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     await pn.goto(URL);
     await pn.evaluate(r=>{ localStorage.clear(); state.routine=parseRoutine(r); state.history=[{fecha:'2026-10-01T12:00:00Z',dayName:'Push',exercises:[{nombre:'Press banca plano',sets:[{peso:60,reps:10,tipo:'Normal',done:true}]}],duracionSeg:600}]; saveState(); setTab('ajustes'); }, RUTINA);
     await pn.waitForTimeout(300);
+    ok('nube: quien no la tenía activada ya no la ve en Ajustes', !(await pn.isVisible('text=Copia automática en la nube')) && await pn.isVisible('text=Conectar Google Drive'));
+    // en el celular donde quedó activada sigue funcionando
+    await pn.evaluate(()=>localStorage.setItem('entrenoNube', JSON.stringify({activa:true})));
+    await pn.reload(); await pn.waitForTimeout(400);
     ok('nube: sin señal al abrir, la app funciona y avisa en Ajustes', await pn.isVisible('text=Copia automática en la nube') && await pn.isVisible('text=No se pudo conectar con la nube') && !errN.length);
+    await pn.evaluate(()=>localStorage.removeItem('entrenoNube'));
+    await pn.reload(); await pn.waitForTimeout(300);
     await conNube(); await pn.evaluate(()=>{ nube.error=''; render(); });
     ok('nube: se ofrece activar', await pn.isVisible('text=Activar con Google'));
     await pn.click('text=Activar con Google'); await pn.waitForTimeout(400);

@@ -3869,7 +3869,9 @@ const TROZO = 250000;        // caracteres por documento: bajo el tope de 1 MiB 
 const COPIAS_SEMANALES = 4;
 const ESPERA_SUBIDA = 8000;  // ms sin cambios antes de subir
 
-function nubeDisponible(){ return !!(FIREBASE_CONFIG || nube.adaptador); }
+// La copia con Firebase se está retirando (la reemplaza Google Drive): ya no se ofrece, y sigue funcionando solo en el
+// celular donde quedó activada, hasta apagarla.
+function nubeDisponible(){ return !!nube.adaptador || (!!FIREBASE_CONFIG && !!ajustesNube().activa); }
 function ajustesNube(){
   try{ return JSON.parse(localStorage.getItem('entrenoNube')) || {}; }
   catch(e){ return {}; }   // ajustes ilegibles: se arranca con la copia apagada y el usuario la vuelve a prender
