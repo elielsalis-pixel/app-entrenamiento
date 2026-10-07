@@ -341,6 +341,7 @@ async function restaurarCopia(obj){
   if(!validarCopia(obj)) throw new Error('El archivo no es una copia de esta app.');
   const nuevo = obj.state;
   nuevo.activeSession = nuevo.activeSession || null;
+  nuevo.currentTab = 'inicio';   // la copia guarda en qué pantalla estaba: al restaurar se arranca desde Inicio
   localStorage.setItem('entrenoState', JSON.stringify(nuevo));
   if(!mediaDB) mediaDB = await abrirMediaDB();
   await mediaClear();
@@ -672,6 +673,7 @@ function guardarRutinaLeida(parsed, txt){
       saveState();
       if(reemplazando){ currentTab='inicio'; state.currentTab='inicio'; }
       render();
+      sincronizarDrive(true);
     }});
 }
 
@@ -839,6 +841,7 @@ function cargarAparte(editada){
       nuevas.forEach(guardarAparte);
       editor = null; rutinaSub = null;
       saveState(); render();
+      sincronizarDrive(true);
     }});
 }
 function aparteATexto(r){ return [`APARTE: ${r.name}`, ...ejerciciosATexto(r.exercises)].join('\n') + '\n'; }
@@ -1163,7 +1166,7 @@ function pedirFinalizar(){
     return;
   }
   if(pendientes && !confirm(`Te quedan ${pendientes} serie${pendientes>1?'s':''} sin marcar: no se van a guardar. ¿Finalizar igual?`)) return;
-  finalizarSesion();
+  finalizarSesion(true);
 }
 // historial viejo: las series tienen done:true/false; solo cuentan las hechas
 function setsHechos(e){ return (e.sets||[]).filter(s=>s.done!==false); }
@@ -1175,7 +1178,8 @@ function serieLimpia(s, medida){
   camposDe(medida).forEach(c=>{ out[c] = s[c]||0; });
   return out;
 }
-function finalizarSesion(){
+// conToque: la finaliza el usuario tocando un botón (a diferencia del cierre automático); hace falta para renovar el acceso a Drive
+function finalizarSesion(conToque){
   cerrarCierre();
   detenerTimer();
   const ses = state.activeSession;
@@ -1222,6 +1226,7 @@ function finalizarSesion(){
   setSessionView('resumen');
   saveState();
   render();
+  sincronizarDrive(!!conToque);
 }
 
 function listaDe(r){ return r.aparte ? state.historyAparte : state.history; }
@@ -1413,13 +1418,17 @@ function informeProgreso(usados, desde){
   if(!lineas.length) return '';
   return `\n\n=== PROGRESO POR EJERCICIO (primera → última sesión del período) ===\n${lineas.join('\n')}\n`;
 }
-function informeRutinaActual(){
+// toda la rutina en el formato de carga: plan, días y rutinas aparte
+function rutinaATexto(){
   if(!state.routine) return '';
-  let out = `\n\n=== RUTINA ACTUAL (mismo formato para cargarla) ===\n`;
-  if(state.plan) out += `${planATexto(state.plan)}\n`;
+  let out = state.plan ? `${planATexto(state.plan)}\n` : '';
   state.routine.days.forEach((d,i)=>{ out += diaToText(d, i); });
   state.rutinasAparte.forEach(r=>{ out += `\n${aparteATexto(r)}`; });
   return out;
+}
+function informeRutinaActual(){
+  const rutina = rutinaATexto();
+  return rutina ? `\n\n=== RUTINA ACTUAL (mismo formato para cargarla) ===\n${rutina}` : '';
 }
 function informeBiblioteca(){
   const noHay = BIBLIOTECA.filter(x=>!disponible(x)).map(x=>x.nombre);
@@ -1647,11 +1656,12 @@ function screenBienvenida(){
   wrap.appendChild(encabezado('Entreno'));
   wrap.appendChild(el(`<p class="secondary" style="margin-bottom:16px">Registrá tus entrenamientos y dejá que la IA que ya usás te arme las rutinas.</p>`));
   const card = el(`<div class="card"><p style="font-weight:600;margin-bottom:4px">Entrá con tu cuenta de Google</p><p class="secondary" style="font-size:13px;margin-bottom:12px">La app crea una carpeta "Entreno" en tu Google Drive y guarda ahí tus cosas, para que no dependan de este celular. Solo puede ver lo que ella misma crea, no el resto de tu Drive.</p></div>`);
-  card.appendChild(boton(drive.conectando ? 'Conectando…' : 'Entrar con Google', 'btn-primary btn-full', async()=>{
+  card.appendChild(boton(drive.ocupado ? 'Conectando…' : 'Entrar con Google', 'btn-primary btn-full', async()=>{
     await conectarDrive();
     if(!driveActivo()) return;
     terminarBienvenida();
-    abrirKit();
+    if(drive.ajena) abrirCopiasDrive();   // ya usaba la app: primero se le ofrece recuperar lo suyo
+    else abrirKit();
   }));
   if(drive.error) card.appendChild(el(`<p style="font-size:13px;color:var(--danger);margin-top:8px">${esc(drive.error)}</p>`));
   wrap.appendChild(card);
@@ -1699,6 +1709,15 @@ function screenInicio(){
   if(window.Notification && Notification.permission==='default'){
     const b = el(`<button class="banner banner-warn">${icon('bell')}<span style="flex:1">El aviso de fin de descanso está apagado en este celular.</span><b>Activar</b></button>`);
     b.onclick = ()=>Notification.requestPermission().then(()=>render());
+    wrap.appendChild(b);
+  }
+  if(drive.ajena){
+    const b = el(`<button class="banner banner-warn">${icon('shield')}<span style="flex:1">En Google Drive hay una copia que no salió de este celular.</span><b>Revisar</b></button>`);
+    b.onclick = abrirCopiasDrive;
+    wrap.appendChild(b);
+  } else if(driveActivo() && ajustesDrive().pendiente && !drive.ocupado){
+    const b = el(`<button class="banner banner-warn">${icon('shield')}<span style="flex:1">${esc(drive.error || 'Hay cambios sin guardar en Google Drive.')}</span><b>Guardar</b></button>`);
+    b.onclick = ()=>sincronizarDrive(true);
     wrap.appendChild(b);
   }
   if(nube.ofrecer){
@@ -2165,12 +2184,19 @@ const DRIVE_RAIZ = 'Entreno';
 const DRIVE_CARPETAS = {rutinas: 'Rutinas', informes: 'Informes', copia: 'Copia de seguridad'};
 const TIPO_CARPETA = 'application/vnd.google-apps.folder';
 const ARCHIVO_INSTRUCCIONES = 'instrucciones-del-entrenador.txt';
+const ARCHIVO_COPIA = 'copia-actual.json';
+const ARCHIVO_MEDIA = 'fotos-y-audios.json';
+const PREFIJO_SEMANAL = 'copia-semana-';
+const TIPO_TEXTO = 'text/plain; charset=UTF-8', TIPO_JSON = 'application/json';
 const drive = {
   adaptador: null,     // acceso a Drive (el real, o uno de mentira en las pruebas)
-  conectando: false,
-  error: ''
+  ocupado: false,      // conectando o guardando
+  error: '',
+  ajena: null,         // copia que está en Drive y no subió este celular: no se pisa sin preguntar
+  copias: []           // lo último listado para la pantalla de copias
 };
-// En este celular se recuerda la carpeta y la cuenta: {raiz, rutinas, informes, copia, cuenta, kit}
+// En este celular se recuerda la carpeta, la cuenta y qué fue lo último que se subió de cada cosa:
+// {raiz, rutinas, informes, copia, cuenta, kit, kitSubido, rutinaSubida, copiaSubida, estadoSubido, mediaSubida, semanaSubida, pendiente, ultima}
 function ajustesDrive(){
   try{ return JSON.parse(localStorage.getItem('entrenoDrive')) || {}; }
   catch(e){ return {}; }   // ajustes ilegibles: se arranca sin Drive y el usuario lo vuelve a conectar
@@ -2198,17 +2224,21 @@ function precargarGoogle(){
 }
 function adaptadorGoogleDrive(){
   const API = 'https://www.googleapis.com/drive/v3', SUBIDA = 'https://www.googleapis.com/upload/drive/v3';
+  const CAMPOS = 'id,name,modifiedTime';
   let token = null, vence = 0;
-  const pedir = async(url, opciones = {})=>{
+  const responder = async(url, opciones = {})=>{
     const r = await fetch(url, {...opciones, headers: {...opciones.headers, Authorization: 'Bearer ' + token}});
     if(!r.ok){
       const d = await r.json().catch(()=>null);   // un error sin detalle legible se informa con su código
       throw new Error((d && d.error && d.error.message) || `Google respondió ${r.status}`);
     }
-    return r.json();
+    return r;
   };
+  const pedir = async(url, opciones)=>(await responder(url, opciones)).json();
+  const ficha = f=>({id: f.id, nombre: f.name, modificado: f.modifiedTime});
   const MOTIVOS = {popup_closed: 'Cerraste la ventana de Google antes de terminar.', popup_failed_to_open: 'El navegador bloqueó la ventana de Google. Tocá de nuevo.'};
   return {
+    accesoVigente: ()=>!!token && Date.now() < vence,
     // el acceso dura cerca de una hora; mientras sirve no se vuelve a pedir
     pedirAcceso: async()=>{
       if(token && Date.now() < vence) return;
@@ -2226,73 +2256,207 @@ function adaptadorGoogleDrive(){
       });
     },
     cuenta: async()=>(await pedir(`${API}/about?fields=user(emailAddress)`)).user.emailAddress,
+    // el más nuevo con ese nombre: {id, nombre, modificado}, o null
     buscar: async(nombre, padre, tipo)=>{
       const q = [`name='${nombre.replace(/['\\]/g, '\\$&')}'`, 'trashed=false', `mimeType${tipo===TIPO_CARPETA ? '=' : '!='}'${TIPO_CARPETA}'`];
       if(padre) q.push(`'${padre}' in parents`);
-      const d = await pedir(`${API}/files?spaces=drive&fields=files(id)&q=${encodeURIComponent(q.join(' and '))}`);
-      return d.files.length ? d.files[0].id : null;
+      const d = await pedir(`${API}/files?spaces=drive&orderBy=modifiedTime desc&fields=files(${CAMPOS})&q=${encodeURIComponent(q.join(' and '))}`);
+      return d.files.length ? ficha(d.files[0]) : null;
+    },
+    listar: async(padre)=>{
+      const q = `'${padre}' in parents and trashed=false and mimeType!='${TIPO_CARPETA}'`;
+      return (await pedir(`${API}/files?spaces=drive&pageSize=100&orderBy=name&fields=files(${CAMPOS})&q=${encodeURIComponent(q)}`)).files.map(ficha);
     },
     crearCarpeta: async(nombre, padre)=>(await pedir(`${API}/files?fields=id`, {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: nombre, mimeType: TIPO_CARPETA, ...(padre ? {parents: [padre]} : {})})})).id,
     // con id reemplaza el contenido; sin id crea el archivo en esa carpeta
     guardar: async(id, nombre, padre, texto, tipo)=>{
-      if(id) return (await pedir(`${SUBIDA}/files/${id}?uploadType=media&fields=id`, {method: 'PATCH', headers: {'Content-Type': tipo}, body: texto})).id;
+      if(id) return ficha(await pedir(`${SUBIDA}/files/${id}?uploadType=media&fields=${CAMPOS}`, {method: 'PATCH', headers: {'Content-Type': tipo}, body: texto}));
       const limite = 'entreno' + Date.now();
       const cuerpo = `--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name: nombre, parents: [padre]})}\r\n--${limite}\r\nContent-Type: ${tipo}\r\n\r\n${texto}\r\n--${limite}--`;
-      return (await pedir(`${SUBIDA}/files?uploadType=multipart&fields=id`, {method: 'POST', headers: {'Content-Type': `multipart/related; boundary=${limite}`}, body: cuerpo})).id;
-    }
+      return ficha(await pedir(`${SUBIDA}/files?uploadType=multipart&fields=${CAMPOS}`, {method: 'POST', headers: {'Content-Type': `multipart/related; boundary=${limite}`}, body: cuerpo}));
+    },
+    leer: async(id)=>(await responder(`${API}/files/${id}?alt=media`)).text(),
+    borrar: async(id)=>{ await responder(`${API}/files/${id}`, {method: 'DELETE'}); }
   };
 }
 function adaptadorDrive(){ return drive.adaptador || (drive.adaptador = adaptadorGoogleDrive()); }
 // usa la carpeta si ya existe (por ejemplo, creada desde otro celular); si no, la crea
 async function carpetaDrive(nombre, padre){
-  const a = adaptadorDrive();
-  return await a.buscar(nombre, padre, TIPO_CARPETA) || a.crearCarpeta(nombre, padre);
+  const a = adaptadorDrive(), ya = await a.buscar(nombre, padre, TIPO_CARPETA);
+  return ya ? ya.id : a.crearCarpeta(nombre, padre);
 }
-async function guardarEnDrive(nombre, padre, texto){
-  const a = adaptadorDrive();
-  return a.guardar(await a.buscar(nombre, padre), nombre, padre, texto, 'text/plain; charset=UTF-8');
+async function guardarEnDrive(nombre, padre, texto, tipo){
+  const a = adaptadorDrive(), ya = await a.buscar(nombre, padre);
+  return a.guardar(ya && ya.id, nombre, padre, texto, tipo || TIPO_TEXTO);
 }
-// lo que se le da a la IA: queda en la carpeta para cargarlo desde Drive
-async function guardarKitEnDrive(raiz){
-  await guardarEnDrive(ARCHIVO_INSTRUCCIONES, raiz, PROMPT_ENTRENADOR);
-  await guardarEnDrive(ARCHIVO_REGLAS, raiz, REGLAS_ENTRENADOR);
-  await guardarEnDrive(ARCHIVO_BIBLIOTECA, raiz, bibliotecaATexto());
+// huella corta de un texto: alcanza para saber si cambió desde la última subida
+function hashTexto(t){
+  let h = 5381;
+  for(let i = 0; i < t.length; i++) h = (h * 33 ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36) + ':' + t.length;
+}
+// lo que se le da a la IA: queda en la carpeta para cargarlo desde Drive. Se vuelve a subir si cambia (ejercicios propios, textos nuevos).
+async function subirKitADrive(){
+  const d = ajustesDrive();
+  const textos = {[ARCHIVO_INSTRUCCIONES]: PROMPT_ENTRENADOR, [ARCHIVO_REGLAS]: REGLAS_ENTRENADOR, [ARCHIVO_BIBLIOTECA]: bibliotecaATexto()};
+  const firma = hashTexto(Object.values(textos).join('\n'));
+  if(firma===d.kitSubido) return;
+  for(const nombre of Object.keys(textos)) await guardarEnDrive(nombre, d.raiz, textos[nombre]);
+  guardarAjustesDrive({kitSubido: firma, kit: Date.now()});
+}
+// la rutina vigente en texto; la que reemplaza queda archivada con la fecha del cambio
+async function subirRutinaADrive(){
+  const d = ajustesDrive(), texto = rutinaATexto();
+  if(!texto || texto===d.rutinaSubida) return;
+  if(d.rutinaSubida) await guardarEnDrive(`rutina-hasta-${hoyISO()}.txt`, d.rutinas, d.rutinaSubida);
+  await guardarEnDrive('rutina-actual.txt', d.rutinas, texto);
+  guardarAjustesDrive({rutinaSubida: texto});
+}
+async function subirInformeADrive(texto){
+  const d = ajustesDrive(), a = state.aviso;
+  await guardarEnDrive('informe-actual.txt', d.informes, texto);
+  if(a && a.tipo==='bloque') await guardarEnDrive(`informe-bloque-${a.nombre}.txt`, d.informes, texto);   // el informe con el que se cerró el bloque queda aparte
+}
+// Copia de seguridad: la actual, las fotos y audios propios (solo si cambiaron) y una por semana.
+async function subirCopiaADrive(){
+  const a = adaptadorDrive(), d = ajustesDrive();
+  const enDrive = await a.buscar(ARCHIVO_COPIA, d.copia);
+  // una copia que no subió este celular (otro celular, o este recién instalado) no se pisa sin preguntar
+  if(enDrive && enDrive.modificado!==d.copiaSubida){ drive.ajena = enDrive; return; }
+  drive.ajena = null;
+  if(appVacia(state) || state.modificado===d.estadoSubido) return;
+  const texto = JSON.stringify(state);
+  const subida = await a.guardar(enDrive && enDrive.id, ARCHIVO_COPIA, d.copia, texto, TIPO_JSON);
+  guardarAjustesDrive({copiaSubida: subida.modificado, estadoSubido: state.modificado});
+  await subirMediaADrive();
+  await subirCopiaSemanal(texto);
+}
+async function subirMediaADrive(){
+  const d = ajustesDrive(), firma = firmaMedia();
+  const hayMedia = Object.keys(media.images).length || media.sounds.length;
+  if(!mediaCargada || firma===d.mediaSubida || (!hayMedia && !d.mediaSubida)) return;
+  await guardarEnDrive(ARCHIVO_MEDIA, d.copia, JSON.stringify({images: media.images, sounds: media.sounds}), TIPO_JSON);
+  guardarAjustesDrive({mediaSubida: firma});
+}
+// la primera copia de cada semana queda guardada; se conservan las últimas
+async function subirCopiaSemanal(texto){
+  const a = adaptadorDrive(), d = ajustesDrive(), nombre = `${PREFIJO_SEMANAL}${claveSemana()}.json`;
+  if(d.semanaSubida===nombre) return;
+  const semanales = (await a.listar(d.copia)).filter(f=>f.nombre.startsWith(PREFIJO_SEMANAL));
+  if(!semanales.some(f=>f.nombre===nombre)) semanales.push(await a.guardar(null, nombre, d.copia, texto, TIPO_JSON));
+  semanales.sort((x, y)=>x.nombre.localeCompare(y.nombre));
+  for(const vieja of semanales.slice(0, Math.max(0, semanales.length - COPIAS_SEMANALES))) await a.borrar(vieja.id);
+  guardarAjustesDrive({semanaSubida: nombre});
+}
+// Sube a Drive lo que haya cambiado desde la última vez.
+// conToque: viene de un toque del usuario. Google solo renueva el acceso desde un toque; sin él y con el acceso vencido,
+// queda anotado como pendiente y se sube en el próximo toque que guarde.
+// armar: crea (o reencuentra) la carpeta con sus subcarpetas. informe: texto del informe recién copiado.
+async function sincronizarDrive(conToque, {armar, informe} = {}){
+  if(drive.ocupado || (!armar && !driveActivo())) return;
+  const a = adaptadorDrive();
+  if(!conToque && !a.accesoVigente()){ guardarAjustesDrive({pendiente: true}); return refrescarDrive(); }
+  drive.ocupado = true; drive.error = '';
+  refrescarDrive();
+  try{
+    await a.pedirAcceso();
+    if(armar){
+      const carpetas = {raiz: await carpetaDrive(DRIVE_RAIZ, null)};
+      for(const k of Object.keys(DRIVE_CARPETAS)) carpetas[k] = await carpetaDrive(DRIVE_CARPETAS[k], carpetas.raiz);
+      guardarAjustesDrive({...carpetas, cuenta: await a.cuenta()});
+    }
+    await subirKitADrive();
+    await subirRutinaADrive();
+    if(informe) await subirInformeADrive(informe);
+    await subirCopiaADrive();
+    guardarAjustesDrive({pendiente: false, ultima: Date.now()});
+  } catch(e){
+    drive.error = `No se pudo ${armar ? 'conectar con' : 'guardar en'} Google Drive: ` + (e.message || e);
+    if(driveActivo()) guardarAjustesDrive({pendiente: true});
+  }
+  drive.ocupado = false;
+  refrescarDrive();
 }
 // Tiene que arrancar desde un toque: Google no abre su ventana de otra forma.
-// Arma (o reencuentra) la carpeta con sus subcarpetas y deja adentro los archivos del entrenador.
-async function conectarDrive(){
-  if(drive.conectando) return;
-  drive.conectando = true; drive.error = '';
-  render();
+function conectarDrive(){ return sincronizarDrive(true, {armar: true}); }
+function desconectarDrive(){ localStorage.removeItem('entrenoDrive'); drive.error = ''; drive.ajena = null; render(); }
+function refrescarDrive(){ redibujarSiNoInterrumpe(); }
+async function abrirCopiasDrive(){
   try{
     const a = adaptadorDrive();
     await a.pedirAcceso();
-    const carpetas = {raiz: await carpetaDrive(DRIVE_RAIZ, null)};
-    for(const k of Object.keys(DRIVE_CARPETAS)) carpetas[k] = await carpetaDrive(DRIVE_CARPETAS[k], carpetas.raiz);
-    await guardarKitEnDrive(carpetas.raiz);
-    guardarAjustesDrive({...carpetas, cuenta: await a.cuenta(), kit: Date.now()});
+    drive.copias = (await a.listar(ajustesDrive().copia)).filter(f=>f.nombre===ARCHIVO_COPIA || f.nombre.startsWith(PREFIJO_SEMANAL));
+    abrirModal('drive', screenCopiasDrive);
   } catch(e){
-    drive.error = 'No se pudo conectar con Google Drive: ' + (e.message || e);
+    drive.error = 'No se pudieron ver las copias de Google Drive: ' + (e.message || e);
+    refrescarDrive();
   }
-  drive.conectando = false;
-  render();
 }
-function desconectarDrive(){ localStorage.removeItem('entrenoDrive'); drive.error = ''; render(); }
+async function restaurarDeDrive(copia){
+  const a = adaptadorDrive(), d = ajustesDrive();
+  await a.pedirAcceso();
+  const estado = JSON.parse(await a.leer(copia.id));
+  const fotos = await a.buscar(ARCHIVO_MEDIA, d.copia);
+  await restaurarCopia({app: 'entreno', state: estado, media: fotos ? JSON.parse(await a.leer(fotos.id)) : media});
+  // lo restaurado pasa a ser lo conocido; si era una copia semanal, queda pendiente de subir como actual
+  const actual = await a.buscar(ARCHIVO_COPIA, d.copia);
+  guardarAjustesDrive({copiaSubida: actual ? actual.modificado : null, estadoSubido: copia.nombre===ARCHIVO_COPIA ? estado.modificado : null, mediaSubida: null});
+  location.reload();
+}
+function quedarmeConEsteCelular(){
+  guardarAjustesDrive({copiaSubida: drive.ajena.modificado});
+  drive.ajena = null;
+  modal = null;
+  sincronizarDrive(true);
+}
+function screenCopiasDrive(){
+  const wrap = document.createElement('div');
+  const vacia = appVacia(state);
+  wrap.appendChild(botonVolver(cerrarModal));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Copias en Google Drive</h2>`));
+  if(drive.ajena) wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">${vacia ? 'Encontré una copia tuya en Google Drive. Restaurala para recuperar todo.' : 'En Google Drive hay una copia que no salió de este celular. Elegí con cuál seguir: no se pisa nada hasta que decidas.'}</p>`));
+  const restaurar = copia=>async()=>{
+    if(!confirm('¿Restaurar esta copia? Reemplaza todo lo que hay ahora en este celular.')) return;
+    try{ await restaurarDeDrive(copia); }
+    catch(e){ alert('No se pudo restaurar: ' + (e.message || e)); }
+  };
+  const titulo = f=>f.nombre===ARCHIVO_COPIA ? 'Copia actual' : `Semana del ${f.nombre.slice(PREFIJO_SEMANAL.length, -5).split('-').reverse().join('/')}`;
+  const filas = [...drive.copias].sort((x, y)=>(y.nombre===ARCHIVO_COPIA) - (x.nombre===ARCHIVO_COPIA) || y.nombre.localeCompare(x.nombre))
+    .map(f=>itemFila({icono: f.nombre===ARCHIVO_COPIA ? 'shield' : 'history', titulo: titulo(f), sub: fechaHoraCorta(new Date(f.modificado).getTime()), derecha: boton('Restaurar', 'btn-sm', restaurar(f))}));
+  if(filas.length) wrap.appendChild(grupo(...filas));
+  else wrap.appendChild(el(`<p class="secondary">Todavía no hay copias en Google Drive.</p>`));
+  if(drive.ajena && !vacia){
+    wrap.appendChild(el('<div style="height:12px"></div>'));
+    wrap.appendChild(boton('Quedarme con lo de este celular', 'btn-full', ()=>{ if(confirm('¿Seguir con los datos de este celular? La copia actual de Drive se reemplaza (las semanales quedan).')) quedarmeConEsteCelular(); }));
+  }
+  return wrap;
+}
+function textoEstadoDrive(d){
+  if(drive.ocupado) return 'Guardando…';
+  const ultimo = d.ultima ? `Último guardado: ${fechaHoraCorta(d.ultima)}.` : 'Todavía no se guardó nada.';
+  return d.pendiente ? `Hay cambios sin guardar en Drive. ${ultimo}` : ultimo;
+}
 function bloqueDrive(){
   const box = el(`<div style="padding:14px"></div>`);
   const d = ajustesDrive();
+  const error = ()=>{ if(drive.error) box.appendChild(el(`<p style="font-size:13px;color:var(--danger);margin-bottom:10px">${esc(drive.error)}</p>`)); };
   if(!d.raiz){
     precargarGoogle();
-    box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Crea una carpeta "Entreno" en tu Google Drive con los archivos para tu entrenador. La app solo puede ver lo que ella misma crea, no el resto de tu Drive.</p>`));
-  } else {
-    box.appendChild(el(`<p class="secondary" style="font-size:13px">Cuenta: ${esc(d.cuenta)}</p>`));
-    box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Carpeta "${DRIVE_RAIZ}" · archivos del entrenador guardados el ${esc(fechaHoraCorta(d.kit))}</p>`));
+    box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Crea una carpeta "Entreno" en tu Google Drive y guarda ahí tu copia de seguridad, tu rutina, tus informes y los archivos para tu entrenador. La app solo puede ver lo que ella misma crea, no el resto de tu Drive.</p>`));
+    error();
+    box.appendChild(boton(drive.ocupado ? 'Conectando…' : 'Conectar Google Drive', 'btn-primary btn-full', conectarDrive));
+    return box;
   }
-  if(drive.error) box.appendChild(el(`<p style="font-size:13px;color:var(--danger);margin-bottom:10px">${esc(drive.error)}</p>`));
-  const rotulo = d.raiz ? 'Actualizar los archivos del entrenador' : 'Conectar Google Drive';
-  box.appendChild(boton(drive.conectando ? 'Conectando…' : rotulo, d.raiz ? 'btn-full' : 'btn-primary btn-full', conectarDrive));
-  if(d.raiz) box.appendChild(boton('Desconectar de este celular', 'btn-ghost btn-sm btn-full', ()=>{ if(confirm('¿Desconectar Google Drive en este celular? La carpeta y sus archivos quedan en tu Drive.')) desconectarDrive(); }));
+  box.appendChild(el(`<p class="secondary" style="font-size:13px">Cuenta: ${esc(d.cuenta)}</p>`));
+  box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Carpeta "${DRIVE_RAIZ}". ${esc(textoEstadoDrive(d))} Se guarda al finalizar cada sesión.</p>`));
+  if(drive.ajena) box.appendChild(el(`<p style="font-size:13px;color:var(--warn);margin-bottom:10px">En Drive hay una copia que no salió de este celular: mirá las copias y elegí con cuál seguir.</p>`));
+  error();
+  const fila = el(`<div class="fila2"></div>`);
+  fila.appendChild(boton('Guardar ahora en Drive', 'btn-sm btn-full', ()=>sincronizarDrive(true)));
+  fila.appendChild(boton('Ver copias de Drive', 'btn-sm btn-full', abrirCopiasDrive));
+  box.appendChild(fila);
+  box.appendChild(boton('Desconectar de este celular', 'btn-ghost btn-sm btn-full', ()=>{ if(confirm('¿Desconectar Google Drive en este celular? La carpeta y sus archivos quedan en tu Drive.')) desconectarDrive(); }));
   return box;
 }
 
@@ -2965,7 +3129,11 @@ function screenHistorial(){
   exp.appendChild(segmentado([['4s','Últimas 4 semanas'],['todo','Todo']], state.exportPeriodo==='todo'?'todo':'4s', (v)=>{ state.exportPeriodo = v; saveState(); render(); }));
   const msg = el(`<div style="font-size:12px;color:var(--success);text-align:center;margin-top:8px"></div>`);
   const fila = el(`<div class="fila2"></div>`);
-  fila.appendChild(boton(`${icon('copy')} Copiar informe`, 'btn-full', ()=>copiarTexto(generarInforme(desdeExport()), msg, 'Informe copiado, listo para pegárselo a tu entrenador')));
+  fila.appendChild(boton(`${icon('copy')} Copiar informe`, 'btn-full', ()=>{
+    const informe = generarInforme(desdeExport());
+    copiarTexto(informe, msg, 'Informe copiado, listo para pegárselo a tu entrenador');
+    sincronizarDrive(true, {informe});
+  }));
   fila.appendChild(boton(`${icon('copy')} Copiar CSV`, 'btn-full', ()=>copiarTexto(generarCSV(desdeExport()), msg, 'CSV copiado, pegalo en una hoja de cálculo')));
   exp.appendChild(fila); exp.appendChild(msg);
   wrap.appendChild(exp);
@@ -3674,15 +3842,15 @@ function mostrarCierre(ejs){
     <div class="fila2"></div>
   </div>`);
   let quedan = 5;
-  const accion = todo ? ()=>{ cerrarCierre(); finalizarSesion(); }
+  const accion = todo ? conToque=>{ cerrarCierre(); finalizarSesion(conToque); }
     : ()=>{ cerrarCierre(); ses.focusIdx = sig; saveState(); render(); mostrarMotivacion(frase(FRASES_SIGUIENTE)); };
   const pintar = ()=>{ caja.querySelector('.cuenta').textContent = todo ? `Finalizando en ${quedan} s` : `Sigue ${ses.exercises[sig].nombre} en ${quedan} s`; };
   const botones = caja.querySelector('.fila2');
   botones.appendChild(boton(todo ? 'Seguir entrenando' : 'Quedarme', 'btn-full', cerrarCierre));
-  botones.appendChild(boton(todo ? 'Finalizar ahora' : 'Ir ahora', 'btn-primary btn-full', accion));
+  botones.appendChild(boton(todo ? 'Finalizar ahora' : 'Ir ahora', 'btn-primary btn-full', ()=>accion(true)));
   pintar();
   document.body.appendChild(caja);
-  cierreIntervalo = setInterval(()=>{ quedan--; if(quedan<=0) accion(); else pintar(); }, 1000);
+  cierreIntervalo = setInterval(()=>{ quedan--; if(quedan<=0) accion(false); else pintar(); }, 1000);
 }
 
 /* ---------- copia automática en la nube (Firebase) ---------- */
@@ -3891,10 +4059,13 @@ function pintarEstadoNube(){
   const p = document.getElementById('estadoNube');
   if(p) p.textContent = textoEstadoNube();
 }
-function refrescarNube(){
+// Lo que cambia solo (subidas en segundo plano) no redibuja una pantalla donde se puede estar escribiendo.
+function redibujarSiNoInterrumpe(){
   const sinEscritura = !state.routine || currentTab==='inicio' || (currentTab==='ajustes' && !ajustesVista);
-  if(sinEscritura && !modal) render(); else pintarEstadoNube();
+  if(sinEscritura && !modal) render();
+  return sinEscritura && !modal;
 }
+function refrescarNube(){ if(!redibujarSiNoInterrumpe()) pintarEstadoNube(); }
 function bloqueNube(){
   const box = el(`<div style="padding:14px;border-top:1px solid var(--border)"><p style="font-weight:600;margin-bottom:4px">Copia automática en la nube</p></div>`);
   if(!nube.activa){

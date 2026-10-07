@@ -914,41 +914,51 @@ calentar bien antes`;
     await pl.close();
   }
 
-  // --- Google Drive: ingreso, carpeta "Entreno" y archivos del entrenador.
+  // --- Google Drive: ingreso, carpeta "Entreno", archivos del entrenador, copia de seguridad, rutina e informe.
   // Google se reemplaza por uno de mentira (el ingreso y la API de Drive), así se prueba el código real que le habla.
   {
-    const ctxD = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
+    const ctxD = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires', permissions:['clipboard-read','clipboard-write']});
     const pd = await ctxD.newPage(); const errD=[]; pd.on('pageerror', e=>errD.push(e.message)); pd.on('dialog', d=>d.accept());
-    const D = {n:0, items:[], pedidos:[], sinPermiso:0};   // items: {id, name, parent, carpeta, texto}
+    const D = {n:0, reloj:0, items:[], sinPermiso:0};   // items: {id, name, parent, carpeta, texto, modificado, veces}
     const CARPETA = 'application/vnd.google-apps.folder';
-    const cors = {'access-control-allow-origin':'*', 'access-control-allow-headers':'*', 'access-control-allow-methods':'GET,POST,PATCH,OPTIONS'};
+    const ahora = ()=>new Date(Date.UTC(2026, 9, 7, 3, 0, D.reloj++)).toISOString();
+    const cors = {'access-control-allow-origin':'*', 'access-control-allow-headers':'*', 'access-control-allow-methods':'GET,POST,PATCH,DELETE,OPTIONS'};
     await pd.route('https://accounts.google.com/gsi/client', r=>r.fulfill({contentType:'text/javascript', body:`window.google={accounts:{oauth2:{
       initTokenClient(cfg){ return {requestAccessToken(){ window.__ventanas=(window.__ventanas||0)+1; setTimeout(()=>window.__falla ? cfg.error_callback({type:window.__falla}) : cfg.callback({access_token:'tok-1', expires_in:3599, scope: window.__permiso===undefined ? cfg.scope : window.__permiso}), 10); }}; },
       hasGrantedAllScopes(r, s){ return String(r.scope||'').split(' ').includes(s); } }}};`}));
     await pd.route('https://www.googleapis.com/**', async r=>{
       const q = r.request(), u = new (require('url').URL)(q.url()), m = q.method();
       if(m==='OPTIONS') return r.fulfill({status:204, headers:cors});
-      D.pedidos.push(m+' '+u.pathname);
       const json = (o, status)=>r.fulfill({status: status||200, headers:cors, contentType:'application/json', body:JSON.stringify(o)});
+      const ficha = i=>({id:i.id, name:i.name, modifiedTime:i.modificado});
       if(q.headers().authorization!=='Bearer tok-1'){ D.sinPermiso++; return json({error:{message:'Invalid Credentials'}}, 401); }
       if(u.pathname==='/drive/v3/about') return json({user:{emailAddress:'prueba@gmail.com'}});
       if(u.pathname==='/drive/v3/files' && m==='GET'){
-        const c = u.searchParams.get('q'), nombre = c.match(/name='((?:[^'\\\\]|\\\\.)*)'/)[1].replace(/\\\\(.)/g,'$1'), padre = (c.match(/'([^']+)' in parents/)||[])[1], carpeta = c.includes(`mimeType='${CARPETA}'`);
-        return json({files: D.items.filter(i=>i.name===nombre && i.carpeta===carpeta && (!padre || i.parent===padre)).map(i=>({id:i.id}))});
+        const c = u.searchParams.get('q'), n = c.match(/name='((?:[^'\\]|\\.)*)'/), padre = (c.match(/'([^']+)' in parents/)||[])[1], carpeta = c.includes(`mimeType='${CARPETA}'`);
+        const nombre = n && n[1].replace(/\\(.)/g, '$1');
+        const encontrados = D.items.filter(i=>(nombre===null || i.name===nombre) && i.carpeta===carpeta && (!padre || i.parent===padre));
+        return json({files: encontrados.sort((x,y)=>nombre===null ? x.name.localeCompare(y.name) : y.modificado.localeCompare(x.modificado)).map(ficha)});
       }
-      if(u.pathname==='/drive/v3/files' && m==='POST'){ const b = JSON.parse(q.postData()); const it = {id:'id'+(++D.n), name:b.name, parent:(b.parents||[null])[0], carpeta:b.mimeType===CARPETA}; D.items.push(it); return json({id:it.id}); }
+      if(u.pathname==='/drive/v3/files' && m==='POST'){ const b = JSON.parse(q.postData()); const it = {id:'id'+(++D.n), name:b.name, parent:(b.parents||[null])[0], carpeta:b.mimeType===CARPETA, modificado:ahora()}; D.items.push(it); return json({id:it.id}); }
       if(u.pathname==='/upload/drive/v3/files' && m==='POST'){
         const limite = q.headers()['content-type'].split('boundary=')[1], partes = q.postDataBuffer().toString('utf8').split('--'+limite);
         const cuerpo = p=>p.slice(p.indexOf('\r\n\r\n')+4).replace(/\r\n$/, '');
         const meta = JSON.parse(cuerpo(partes[1]));
-        const it = {id:'id'+(++D.n), name:meta.name, parent:meta.parents[0], carpeta:false, texto:cuerpo(partes[2]), tipo:partes[2].match(/Content-Type: (.*)\r\n/)[1]}; D.items.push(it); return json({id:it.id});
+        const it = {id:'id'+(++D.n), name:meta.name, parent:meta.parents[0], carpeta:false, texto:cuerpo(partes[2]), tipo:partes[2].match(/Content-Type: (.*)\r\n/)[1], modificado:ahora(), veces:1}; D.items.push(it); return json(ficha(it));
       }
-      const act = u.pathname.match(/^\/upload\/drive\/v3\/files\/(.+)$/);
-      if(act && m==='PATCH'){ const it = D.items.find(i=>i.id===act[1]); if(!it) return json({error:{message:'File not found'}}, 404); it.texto = q.postDataBuffer().toString('utf8'); it.veces = (it.veces||1)+1; return json({id:it.id}); }
+      const act = u.pathname.match(/^\/upload\/drive\/v3\/files\/(.+)$/), uno = u.pathname.match(/^\/drive\/v3\/files\/(.+)$/);
+      if(act && m==='PATCH'){ const it = D.items.find(i=>i.id===act[1]); if(!it) return json({error:{message:'File not found'}}, 404); it.texto = q.postDataBuffer().toString('utf8'); it.veces++; it.modificado = ahora(); return json(ficha(it)); }
+      if(uno && m==='GET' && u.searchParams.get('alt')==='media'){ const it = D.items.find(i=>i.id===uno[1]); return it ? r.fulfill({status:200, headers:cors, contentType:'text/plain', body:it.texto}) : json({error:{message:'File not found'}}, 404); }
+      if(uno && m==='DELETE'){ D.items = D.items.filter(i=>i.id!==uno[1]); return r.fulfill({status:204, headers:cors}); }
       return json({error:{message:'pedido no previsto: '+m+' '+u.pathname}}, 400);
     });
-    const hijos = padre=>D.items.filter(i=>i.parent===padre).map(i=>i.name).sort().join();
+    const carpeta = n=>D.items.find(i=>i.name===n && i.carpeta);
+    const hijos = n=>D.items.filter(i=>i.parent===carpeta(n).id).map(i=>i.name).sort().join();
     const archivo = n=>D.items.find(i=>i.name===n && !i.carpeta);
+    const quieto = async()=>{ await pd.waitForFunction(()=>!drive.ocupado, null, {timeout:8000}); await pd.waitForTimeout(80); };
+    const ventanas = ()=>pd.evaluate(()=>window.__ventanas||0);
+    const copiaEnDrive = ()=>JSON.parse(archivo('copia-actual.json').texto);
+    const sesionHecha = conToque=>pd.evaluate(conToque=>{ empezarSesion(todayDayIndex()); state.activeSession.exercises.forEach(e=>e.sets.forEach(s=>{ s.peso = 40; s.reps = 10; s.done = true; })); if(conToque===null) return; finalizarSesion(conToque); setSessionView('activa'); setTab('inicio'); }, conToque);
     await pd.goto(URL);
     await pd.evaluate(()=>localStorage.clear()); await pd.reload(); await pd.waitForTimeout(400);
     await pd.evaluate(()=>{ window.__falla='popup_closed'; });
@@ -959,31 +969,111 @@ calentar bien antes`;
     ok('drive: sin la casilla de permiso de Drive avisa cómo seguir', await pd.isVisible('text=Falta el permiso para guardar en Drive') && D.items.length===0);
     await pd.evaluate(()=>{ window.__permiso=undefined; });
     await pd.click('button:has-text("Entrar con Google")');
-    await pd.waitForFunction(()=>driveActivo(), null, {timeout:8000});
-    const raiz = D.items.find(i=>i.name==='Entreno');
-    ok('drive: crea la carpeta Entreno con sus tres subcarpetas', !!raiz && raiz.carpeta && raiz.parent===null && D.items.filter(i=>i.carpeta).length===4 && D.items.filter(i=>i.carpeta && i.parent===raiz.id).map(i=>i.name).sort().join()==='Copia de seguridad,Informes,Rutinas', JSON.stringify(D.items.map(i=>[i.name,i.parent])));
-    ok('drive: deja en la carpeta los tres archivos del entrenador', hijos(raiz.id)==='Copia de seguridad,Informes,Rutinas,biblioteca-ejercicios.txt,instrucciones-del-entrenador.txt,reglas-para-armar-rutinas.txt' && archivo('instrucciones-del-entrenador.txt').texto===(await pd.evaluate(()=>PROMPT_ENTRENADOR)) && archivo('reglas-para-armar-rutinas.txt').texto===(await pd.evaluate(()=>REGLAS_ENTRENADOR)) && archivo('biblioteca-ejercicios.txt').texto===(await pd.evaluate(()=>bibliotecaATexto())) && archivo('reglas-para-armar-rutinas.txt').texto.includes('DIA 2: Tirón') && archivo('biblioteca-ejercicios.txt').tipo.startsWith('text/plain'));
+    await pd.waitForFunction(()=>driveActivo() && !drive.ocupado, null, {timeout:8000});
+    const raiz = carpeta('Entreno');
+    ok('drive: crea la carpeta Entreno con sus tres subcarpetas', !!raiz && raiz.parent===null && D.items.filter(i=>i.carpeta).length===4 && D.items.filter(i=>i.carpeta && i.parent===raiz.id).map(i=>i.name).sort().join()==='Copia de seguridad,Informes,Rutinas', JSON.stringify(D.items.map(i=>[i.name,i.parent])));
+    ok('drive: deja en la carpeta los tres archivos del entrenador', hijos('Entreno')==='Copia de seguridad,Informes,Rutinas,biblioteca-ejercicios.txt,instrucciones-del-entrenador.txt,reglas-para-armar-rutinas.txt' && archivo('instrucciones-del-entrenador.txt').texto===(await pd.evaluate(()=>PROMPT_ENTRENADOR)) && archivo('reglas-para-armar-rutinas.txt').texto===(await pd.evaluate(()=>REGLAS_ENTRENADOR)) && archivo('biblioteca-ejercicios.txt').texto===(await pd.evaluate(()=>bibliotecaATexto())) && archivo('reglas-para-armar-rutinas.txt').texto.includes('DIA 2: Tirón') && archivo('biblioteca-ejercicios.txt').tipo.startsWith('text/plain'));
+    ok('drive: una app vacía no sube copia ni rutina', hijos('Copia de seguridad')==='' && hijos('Rutinas')==='');
     ok('drive: después de entrar abre el kit, que ya habla de Drive', await pd.isVisible('h2:has-text("Tu entrenador")') && await pd.isVisible('.card:has-text("PASO 2"):has-text("ya están en tu Google Drive, en la carpeta Entreno")') && await pd.isVisible('.card:has-text("PASO 5"):has-text("están en tu Google Drive, en la carpeta Entreno")') && !(await pd.textContent('#screen')).includes('{archivos}'));
     ok('drive: recuerda la cuenta y la carpeta en el celular', await pd.evaluate(id=>{ const d=ajustesDrive(); return d.raiz===id && d.cuenta==='prueba@gmail.com' && !!d.rutinas && !!d.informes && !!d.copia && state.bienvenidaVista===true; }, raiz.id));
     await pd.click('text=Volver');
     ok('drive: al volver del kit sigue la carga de la rutina', await pd.isVisible('text=Cargá tu rutina'));
-    await pd.evaluate(r=>{ state.routine={days: parseRoutine(r).days}; state.bibliotecaPropia=[{id:'propio-9', nombre:'Remo Hammer casero', alias:['remo hammer casero'], patron:'tiron_h', principal:['Dorsales'], secundarios:[], equipo:'Máquina', tipo:'Propio', nivel:'—', lumbar:'baja', medida:'kg+reps', mecanica:'', fotos:[], propio:true}]; saveState(); }, RUTINA);
+
+    // cargar la rutina (un toque que guarda) la refleja en Drive junto con la primera copia
+    await pd.fill('#routinepaste', RUTINA);
+    await pd.click('button:has-text("Cargar rutina")');
+    if(await pd.isVisible('h2:has-text("Revisar rutina")')) await pd.click('button:has-text("Guardar así")');
+    await quieto();
+    const lunes = await pd.evaluate(()=>claveSemana());
+    ok('drive: al cargar la rutina sube rutina-actual.txt en el formato de la app', hijos('Rutinas')==='rutina-actual.txt' && archivo('rutina-actual.txt').texto===(await pd.evaluate(()=>rutinaATexto())) && archivo('rutina-actual.txt').texto.startsWith('DIA 1: Push'));
+    ok('drive: sube la copia de seguridad actual y la primera de la semana', hijos('Copia de seguridad')===`copia-actual.json,copia-semana-${lunes}.json` && copiaEnDrive().routine.days.length===5 && archivo('copia-actual.json').tipo==='application/json' && archivo(`copia-semana-${lunes}.json`).texto===archivo('copia-actual.json').texto);
+    ok('drive: sin fotos ni audios propios no sube ese archivo', !archivo('fotos-y-audios.json'));
+
+    // finalizar una sesión con el botón guarda la copia; cambiar la rutina archiva la anterior
+    const rutinaVieja = archivo('rutina-actual.txt').texto;
+    await pd.evaluate(()=>{ state.routine.days[0].exercises[0].series = 4; saveState(); });
+    await sesionHecha(null);
+    await pd.evaluate(()=>{ state.activeSession.focusIdx = state.activeSession.exercises.length-1; saveState(); setTab('sesion'); });
+    const v0 = await ventanas();
+    await pd.click('#screen .fila2 button:has-text("Finalizar sesión")');
+    await quieto();
+    const hoy = await pd.evaluate(()=>hoyISO());
+    ok('drive: finalizar la sesión con el botón sube la copia', copiaEnDrive().history.length===1 && archivo('copia-actual.json').veces===2 && await pd.evaluate(()=>!ajustesDrive().pendiente));
+    ok('drive: la rutina que cambió queda archivada con la fecha y se sube la nueva', hijos('Rutinas')===`rutina-actual.txt,rutina-hasta-${hoy}.txt` && archivo(`rutina-hasta-${hoy}.txt`).texto===rutinaVieja && archivo('rutina-actual.txt').texto.includes('series 4'));
+    ok('drive: con el acceso vigente no vuelve a abrir la ventana de Google', (await ventanas())===v0 && D.sinPermiso===0);
+    ok('drive: la copia semanal no se pisa con las sesiones de la semana', JSON.parse(archivo(`copia-semana-${lunes}.json`).texto).history.length===0 && D.items.filter(i=>i.name.startsWith('copia-semana-')).length===1);
+
+    // acceso vencido (la app se volvió a abrir) y cierre sin toque: queda pendiente y se sube con el próximo toque
+    await pd.evaluate(()=>{ setSessionView('activa'); setTab('inicio'); });
     await pd.reload(); await pd.waitForTimeout(400);
+    const v1 = await ventanas();
+    await sesionHecha(false);
+    await pd.waitForTimeout(300);
+    ok('drive: sin toque y con el acceso vencido no abre la ventana y lo deja pendiente', (await ventanas())===v1 && copiaEnDrive().history.length===1 && await pd.evaluate(()=>ajustesDrive().pendiente===true && state.history.length===2));
+    ok('drive: Inicio avisa que hay cambios sin guardar', await pd.isVisible('.banner:has-text("Hay cambios sin guardar en Google Drive")'));
+    await pd.click('.banner:has-text("Hay cambios sin guardar en Google Drive")');
+    await quieto();
+    ok('drive: el aviso guarda con un toque', copiaEnDrive().history.length===2 && (await ventanas())===v1+1 && await pd.evaluate(()=>!ajustesDrive().pendiente) && !(await pd.isVisible('.banner:has-text("Hay cambios sin guardar")')));
+    await sesionHecha(false);
+    await quieto();
+    ok('drive: con el acceso vigente el cierre automático también guarda', copiaEnDrive().history.length===3 && (await ventanas())===v1+1);
+
+    // informe, ejercicios propios y copias
+    await pd.evaluate(()=>{ state.bibliotecaPropia=[{id:'propio-9', nombre:'Remo Hammer casero', alias:['remo hammer casero'], patron:'tiron_h', principal:['Dorsales'], secundarios:[], equipo:'Máquina', tipo:'Propio', nivel:'—', lumbar:'baja', medida:'kg+reps', mecanica:'', fotos:[], propio:true}]; saveState(); setTab('historial'); });
+    await pd.click('button:has-text("Copiar informe")');
+    await quieto();
+    ok('drive: copiar el informe lo guarda en Informes', hijos('Informes')==='informe-actual.txt' && archivo('informe-actual.txt').texto.startsWith('INFORME DE ENTRENAMIENTO') && archivo('informe-actual.txt').texto===(await pd.evaluate(()=>navigator.clipboard.readText())));
+    ok('drive: un ejercicio propio nuevo actualiza la biblioteca sin duplicarla', archivo('biblioteca-ejercicios.txt').veces===2 && archivo('biblioteca-ejercicios.txt').texto.includes('Remo Hammer casero') && archivo('reglas-para-armar-rutinas.txt').veces===2 && D.items.filter(i=>i.name==='biblioteca-ejercicios.txt').length===1);
     await pd.evaluate(()=>setTab('ajustes'));
-    ok('drive: Ajustes muestra la cuenta conectada', await pd.isVisible('text=Cuenta: prueba@gmail.com') && await pd.isVisible('button:has-text("Actualizar los archivos del entrenador")'));
+    ok('drive: Ajustes muestra la cuenta y el último guardado', await pd.isVisible('text=Cuenta: prueba@gmail.com') && await pd.isVisible('text=Último guardado:') && await pd.isVisible('button:has-text("Guardar ahora en Drive")'));
+    await pd.evaluate(()=>{ sincronizarDrive(true); }); await quieto();
+    const vecesCopia = archivo('copia-actual.json').veces, total = D.items.length;
+    await pd.evaluate(()=>{ sincronizarDrive(true); }); await quieto();
+    ok('drive: sin cambios no vuelve a subir nada', archivo('copia-actual.json').veces===vecesCopia && D.items.length===total && archivo('rutina-actual.txt').veces===2);
+    await pd.click('button:has-text("Ver copias de Drive")');
+    await pd.waitForSelector('h2:has-text("Copias en Google Drive")', {timeout:8000});
+    ok('drive: lista la copia actual y la semanal', await pd.isVisible('h2:has-text("Copias en Google Drive")') && await pd.isVisible('.item:has-text("Copia actual")') && await pd.isVisible(`.item:has-text("Semana del ${lunes.split('-').reverse().join('/')}")`));
+    await pd.click('text=Volver');
+
+    // solo se conservan las últimas copias semanales
+    ['2026-08-31','2026-09-07','2026-09-14','2026-09-21'].forEach(f=>D.items.push({id:'id'+(++D.n), name:`copia-semana-${f}.json`, parent:carpeta('Copia de seguridad').id, carpeta:false, texto:'{}', modificado:ahora(), veces:1}));
+    await pd.evaluate(()=>{ guardarAjustesDrive({semanaSubida: null}); saveState(); sincronizarDrive(true); }); await quieto();
+    ok('drive: quedan 4 copias semanales y se borra la más vieja', D.items.filter(i=>i.name.startsWith('copia-semana-')).map(i=>i.name).sort().join()===['2026-09-07','2026-09-14','2026-09-21',lunes].map(f=>`copia-semana-${f}.json`).join());
+
+    // celular nuevo: al entrar encuentra la copia y la ofrece
+    await pd.evaluate(async()=>{ localStorage.clear(); await mediaClear(); });
+    await pd.reload(); await pd.waitForTimeout(400);
+    const copiaAntes = archivo('copia-actual.json').texto;
+    await pd.click('button:has-text("Entrar con Google")');
+    await pd.waitForSelector('h2:has-text("Copias en Google Drive")', {timeout:8000});
+    ok('drive: en un celular nuevo ofrece recuperar la copia en vez del kit', await pd.isVisible('text=Encontré una copia tuya en Google Drive') && await pd.isVisible('.item:has-text("Copia actual")') && !(await pd.isVisible('button:has-text("Quedarme con lo de este celular")')) && archivo('copia-actual.json').texto===copiaAntes);
+    await pd.locator('.item:has-text("Copia actual") button:has-text("Restaurar")').click();
+    await pd.waitForFunction(()=>typeof state!=='undefined' && state.history && state.history.length===3 && document.querySelector('#tabbar button'), null, {timeout:8000});
+    await pd.waitForTimeout(400);
+    ok('drive: restaurar trae la rutina y el historial', await pd.evaluate(()=>state.routine.days.length===5 && state.history.length===3 && (state.bibliotecaPropia||[]).length===1 && driveActivo()) && await pd.isVisible('h1:has-text("Tren superior")'));
+    await pd.evaluate(()=>{ sincronizarDrive(true); }); await quieto();
+    ok('drive: después de restaurar sigue guardando sin avisos falsos', await pd.evaluate(()=>drive.ajena===null && drive.error==='') && !(await pd.isVisible('.banner:has-text("no salió de este celular")')));
+
+    // otro celular subió una copia: no se pisa sin preguntar
+    const deOtro = archivo('copia-actual.json'); deOtro.texto = JSON.stringify({...JSON.parse(deOtro.texto), marca:'otro celular'}); deOtro.modificado = ahora();
+    await sesionHecha(true);
+    await quieto();
+    ok('drive: una copia de otro celular no se pisa', copiaEnDrive().marca==='otro celular' && await pd.evaluate(()=>!!drive.ajena && state.history.length===4));
+    await pd.evaluate(()=>render());
+    ok('drive: Inicio avisa que hay una copia que no salió de este celular', await pd.isVisible('.banner:has-text("En Google Drive hay una copia que no salió de este celular")'));
+    await pd.click('.banner:has-text("En Google Drive hay una copia que no salió de este celular")');
+    await pd.waitForSelector('h2:has-text("Copias en Google Drive")', {timeout:8000});
+    await pd.click('button:has-text("Quedarme con lo de este celular")');
+    await quieto();
+    ok('drive: al elegir este celular, sube lo de acá', copiaEnDrive().history.length===4 && !copiaEnDrive().marca && await pd.evaluate(()=>drive.ajena===null));
+
+    await pd.evaluate(()=>setTab('ajustes'));
     const antes = D.items.length;
-    await pd.click('button:has-text("Actualizar los archivos del entrenador")');
-    await pd.waitForFunction(()=>!drive.conectando, null, {timeout:8000}); await pd.waitForTimeout(100);
-    ok('drive: actualizar reemplaza los archivos sin duplicar nada', D.items.length===antes && archivo('biblioteca-ejercicios.txt').veces===2 && archivo('biblioteca-ejercicios.txt').texto.includes('Remo Hammer casero') && await pd.evaluate(()=>drive.error===''));
-    await pd.evaluate(()=>{ window.__antes = window.__ventanas; });
-    await pd.click('button:has-text("Actualizar los archivos del entrenador")');
-    await pd.waitForFunction(()=>!drive.conectando, null, {timeout:8000});
-    ok('drive: con el acceso vigente no vuelve a abrir la ventana de Google', await pd.evaluate(()=>window.__ventanas===window.__antes) && D.sinPermiso===0);
     await pd.click('button:has-text("Desconectar de este celular")');
     ok('drive: desconectar deja la carpeta en Drive y ofrece conectar de nuevo', await pd.isVisible('button:has-text("Conectar Google Drive")') && await pd.evaluate(()=>!driveActivo()) && D.items.length===antes);
     await pd.click('button:has-text("Conectar Google Drive")');
-    await pd.waitForFunction(()=>driveActivo(), null, {timeout:8000});
-    ok('drive: al reconectar reencuentra la misma carpeta', await pd.evaluate(id=>ajustesDrive().raiz===id, raiz.id) && D.items.length===antes);
+    await pd.waitForFunction(()=>driveActivo() && !drive.ocupado, null, {timeout:8000});
+    ok('drive: al reconectar reencuentra la misma carpeta y no pisa la copia sin preguntar', await pd.evaluate(id=>ajustesDrive().raiz===id && !!drive.ajena, raiz.id) && D.items.filter(i=>i.carpeta).length===4 && D.items.filter(i=>i.name==='copia-actual.json').length===1);
     ok('drive: sin errores de JavaScript', !errD.length, errD.join(' | '));
     await ctxD.close();
   }
