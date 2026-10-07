@@ -1106,6 +1106,80 @@ calentar bien antes`;
   ok('sin internet: la foto del ejercicio queda guardada', guardada);
   await ctx2.close();
 
+  // --- rutinas armadas: catálogo, elección, plan por bloques y rutinas aparte sugeridas
+  {
+    const ctxB = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
+    const pb = await ctxB.newPage(); const errB=[]; pb.on('pageerror', e=>errB.push(e.message));
+    const dialB=[]; pb.on('dialog', d=>{ dialB.push(d.message()); d.accept(); });
+    await pb.goto(URL); await pb.waitForTimeout(300);
+    const catalogo = await pb.evaluate(()=>{
+      const mal = [], enBib = new Set(BIBLIOTECA.map(x=>x.nombre));
+      let ofrecidas = 0;
+      RUTINAS_BASE.forEach(r=>{
+        const plan = planBase(r), dias = enDosDias(r) ? [2, 3] : [null];
+        ofrecidas += dias.length;
+        dias.forEach(d=>[0, 1].forEach(variante=>[null, ...(plan || []).map((_, i)=>i)].forEach(bloque=>{
+          const texto = textoRutinaBase({id: r.id, variante, dias: d, bloque}), leida = parseRoutine(texto), donde = `${r.id} ${variante} ${bloque}`;
+          if(leida.days.length!==(d || r.dias.length)) mal.push('días: '+donde);
+          if((bloque!==null) !== !!leida.plan) mal.push('plan: '+donde);
+          leida.days.forEach(dia=>{
+            const nombres = dia.exercises.map(e=>e.nombre);
+            if(dia.exercises.length < 4) mal.push('día corto: '+donde);
+            if(new Set(nombres).size!==nombres.length) mal.push('repetido: '+donde+' '+dia.name);
+            nombres.forEach(n=>{ if(!enBib.has(n)) mal.push('no está en la biblioteca: '+n); });
+            dia.exercises.forEach(e=>{ if(!e.cardio && (!e.series || (camposDe(e.medida).includes('reps') && !e.repsMin))) mal.push('sin series o reps: '+donde+' '+e.nombre); });
+          });
+          if(JSON.stringify(parseRoutine(leida.days.map(diaToText).join('\n')).days)!==JSON.stringify(leida.days)) mal.push('ida y vuelta: '+donde);
+        })));
+      });
+      APARTE_BASE.forEach(x=>{ const a = parseRoutine(x.texto).aparte; if(a.length!==1 || a[0].name!==x.nombre || !a[0].exercises.every(e=>enBib.has(e.nombre))) mal.push('aparte: '+x.nombre); });
+      return {mal, ofrecidas};
+    });
+    ok('rutinas armadas: las 18, en sus dos variantes y en cada bloque, se leen, usan ejercicios de la biblioteca y no repiten ejercicio en un día', catalogo.mal.length===0 && catalogo.ofrecidas===18, catalogo.mal.slice(0, 5).join(' | ')+' · '+catalogo.ofrecidas);
+    ok('rutinas armadas: los bloques cambian los ejercicios principales y la descarga baja las series a la mitad', await pb.evaluate(()=>{
+      const dia1 = b=>parseRoutine(textoRutinaBase({id: 'musculo-gimnasio-4', variante: 0, dias: null, bloque: b})).days[0].exercises;
+      const [h, f, d] = [0, 1, 2].map(dia1);
+      return h[0].series===4 && h[0].repsMin===6 && h[0].descanso===150 && h[0].calentamiento===1
+        && f[0].series===5 && f[0].repsMin===4 && f[0].repsMax===6 && f[0].descanso===180
+        && f[4].series===h[4].series && f[4].repsMin===h[4].repsMin && d[0].series===2 && d[4].series===2 && d[0].nombre===h[0].nombre;
+    }));
+    await pb.click('text=Seguir sin Google');
+    await pb.click('button:has-text("Elegir una rutina armada")');
+    ok('rutinas armadas: se eligen por objetivo y lugar', await pb.isVisible('text=Rutinas generales para empezar hoy') && await pb.locator('#screen .card').count()===4 && await pb.isVisible('.card:has-text("6 DÍAS POR SEMANA")'));
+    await pb.click('[role="tab"]:has-text("Fuerza")');
+    ok('rutinas armadas: solo ofrece los lugares que tienen rutina para ese objetivo', await pb.locator('[role="tab"]:has-text("Casa")').count()===0 && await pb.locator('#screen .card').count()===2);
+    await pb.click('[role="tab"]:has-text("Salud")'); await pb.click('[role="tab"]:has-text("Sin equipo")');
+    await pb.click('button:has-text("Ver esta rutina")');
+    await pb.click('[role="tab"]:has-text("2 días")');
+    ok('rutinas armadas: las de salud se pueden hacer en dos días y no ofrecen plan', await pb.locator('#screen .card').count()===2 && !(await pb.isVisible('text=Plan por bloques')));
+    await pb.click('button:has-text("Volver")');
+    await pb.click('[role="tab"]:has-text("Músculo")');
+    await pb.click('.card:has-text("Torso y pierna") button:has-text("Ver esta rutina")');
+    ok('rutinas armadas: muestra cómo queda antes de usarla', await pb.isVisible('.card:has-text("DÍA 1"):has-text("Press banca plano con barra")') && await pb.locator('#screen .card').count()===4);
+    await pb.click('[role="tab"]:has-text("Variante B")');
+    ok('rutinas armadas: la variante B cambia los ejercicios', await pb.isVisible('.card:has-text("DÍA 1"):has-text("Press banca con mancuernas")') && !(await pb.isVisible('.card:has-text("DÍA 1"):has-text("Press banca plano con barra")')));
+    await pb.click('[role="switch"][aria-label="Plan por bloques"]');
+    await pb.click('button:has-text("Usar esta rutina")');
+    ok('rutinas armadas: al usarla queda cargada con su plan, desde el día 1', await pb.evaluate(()=>state.routine.days.length===4 && state.plan.bloques.map(b=>b.nombre+b.semanas).join()==='Hipertrofia4,Fuerza3,Descarga1' && state.semana===1 && state.slot===0 && state.base.id==='musculo-gimnasio-4' && state.base.variante===1 && state.base.bloque===0 && currentTab==='inicio' && modal===null) && await pb.isVisible('text=Empezar entrenamiento') && !dialB.length);
+    await pb.evaluate(()=>{ state.semana = 5; state.slot = 16; state.aviso = {tipo: 'bloque', nombre: 'Hipertrofia'}; saveState(); render(); });
+    ok('rutinas armadas: al terminar un bloque ofrece la rutina del siguiente en vez de mandar a un entrenador', await pb.isVisible('text=Empieza el bloque Fuerza (3 sem)') && !(await pb.isVisible('text=pedile a tu entrenador')));
+    await pb.click('button:has-text("Cargar la rutina de este bloque")');
+    ok('rutinas armadas: cargar el bloque cambia series y repeticiones sin mover la semana ni la variante', dialB.some(d=>d.includes('vuelve el original')) && await pb.evaluate(()=>{ const e = state.routine.days[0].exercises[0]; return e.nombre==='Press banca con mancuernas' && e.series===5 && e.repsMax===6 && state.semana===5 && state.slot===16 && state.base.bloque===1 && state.aviso===null; }) && !(await pb.isVisible('text=Empieza el bloque')));
+    await pb.evaluate(()=>{ state.semana = 9; saveState(); render(); });
+    await pb.click('button:has-text("Repetir con la variante A")');
+    ok('rutinas armadas: al terminar el plan se puede repetir con la otra variante', await pb.evaluate(()=>state.base.variante===0 && state.base.bloque===0 && state.semana===1 && state.slot===0 && state.routine.days[0].exercises[0].nombre==='Press banca plano con barra' && state.routine.days[0].exercises[0].series===4) && !(await pb.isVisible('text=Terminaste el plan')));
+    await pb.evaluate(()=>{ rutinaVista = 'aparte'; setTab('rutina'); });
+    await pb.click('.item:has-text("Abdominales") button:has-text("Sumar")');
+    ok('rutinas armadas: las rutinas aparte sugeridas se suman con un toque y dejan de ofrecerse', await pb.evaluate(()=>state.rutinasAparte.length===1 && state.rutinasAparte[0].name==='Abdominales' && state.rutinasAparte[0].exercises.length===4 && state.rutinasAparte[0].exercises.every(e=>e.circuito)) && await pb.locator('.item:has-text("Sumar")').count()===2);
+    await pb.evaluate(()=>{ rutinaVista = 'dias'; rutinaSub = 'nueva'; render(); });
+    ok('rutinas armadas: también se llega desde "Cargar rutina nueva"', await pb.isVisible('button:has-text("Elegir una rutina armada")'));
+    await pb.fill('#routinepaste', 'DIA 1: Mía\nPress banca plano con barra | series 3 | reps 8-10');
+    await pb.click('button:has-text("Reemplazar rutina completa")'); await pb.waitForTimeout(200);
+    ok('rutinas armadas: cargar una rutina propia la reemplaza y ya no ofrece bloques', await pb.evaluate(()=>state.routine.days.length===1 && state.routine.days[0].name==='Mía' && state.base===null && bloquePendienteBase()===null));
+    ok('rutinas armadas: sin errores de JavaScript', !errB.length, errB.join(' | '));
+    await ctxB.close();
+  }
+
   // --- modo oscuro: carga sin errores
   const ctx3 = await browser.newContext({viewport:{width:390,height:844}, colorScheme:'dark'});
   const p3 = await ctx3.newPage(); const err3=[]; p3.on('pageerror', e=>err3.push(e.message));

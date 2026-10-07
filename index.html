@@ -8,6 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <script src="biblioteca.js"></script>
 <script src="entrenador.js"></script>
+<script src="rutinas.js"></script>
 <style>
   :root{
     --bg:#f4f3f0; --surface:#ffffff; --surface-2:#eeece7;
@@ -640,6 +641,63 @@ function parseRoutine(text){
   return out;
 }
 
+/* ---------- rutinas armadas (catálogo en rutinas.js) ---------- */
+// Se arman como texto en el formato de la app y entran por el mismo lector que cualquier otra rutina.
+// Una elección es {id, variante (0 = A, 1 = B), dias (cuántos días usar; null = todos), bloque (del plan; null = sin plan)}.
+function rutinaBase(id){ return RUTINAS_BASE.find(r=>r.id===id) || null; }
+function planBase(r){ return PLANES_BASE[r.objetivo] || null; }
+// renglón del catálogo -> renglón de la app. b: bloque del plan que se está armando (o null)
+function renglonBase(r, renglon, variante, b){
+  if(renglon===')') return 'FIN CIRCUITO';
+  const [puesto, tipo, series, reps, descanso] = renglon.split(' ');
+  if(puesto==='(') return `CIRCUITO ${tipo} vueltas | descanso ${series}`;
+  const par = PUESTOS_BASE[r.lugar][puesto.replace('~', '')];
+  const nombre = par[puesto.endsWith('~') ? 1 - variante : variante];
+  if(tipo==='k') return `CARDIO: ${nombre}`;
+  if(series==='-') return tipo==='t' ? nombre : `${nombre} | reps ${reps}`;   // dentro de un circuito
+  const compuesto = tipo==='c', cambio = (compuesto && b && b.compuesto) || {};
+  let s = parseInt(series, 10);
+  if(cambio.series) s = cambio.series==='una más' ? Math.min(5, s + 1) : cambio.series;
+  if(b && b.mitad) s = Math.ceil(s / 2);
+  const partes = [nombre, `descanso ${cambio.descanso || descanso}`];
+  if(compuesto && r.lugar==='gimnasio') partes.push('calentamiento 1', `aproximacion ${r.objetivo==='fuerza' ? 1 : 0}`);
+  partes.push(`series ${s}`);
+  if(tipo!=='t') partes.push(`reps ${cambio.reps || reps}`);
+  return partes.join(' | ');
+}
+function textoRutinaBase({id, variante, dias, bloque}){
+  const r = rutinaBase(id), plan = planBase(r);
+  const b = bloque==null ? null : plan[bloque];
+  const lineas = b ? [planATexto({bloques: plan})] : [];
+  r.dias.slice(0, dias || r.dias.length).forEach(([nombre, renglones], i)=>{
+    lineas.push(`DIA ${i+1}: ${nombre}`, ...renglones.map(x=>renglonBase(r, x, variante, b)));
+  });
+  return lineas.join('\n');
+}
+// empezar: true arranca de cero (día 1, semana 1); false solo cambia los días por los del bloque que sigue
+function cargarRutinaBase(eleccion, empezar){
+  const leida = parseRoutine(textoRutinaBase(eleccion));
+  state.routine = {days: leida.days};
+  state.base = eleccion;
+  if(empezar){ state.plan = leida.plan ? {bloques: leida.plan} : null; state.semana = 1; state.slot = 0; }
+  state.aviso = null;
+  saveState();
+  sincronizarDrive(true);
+}
+// Con una rutina armada y su plan: el bloque que toca y todavía no está cargado ({bloque, i}), 'fin' si el plan terminó, o null.
+function bloquePendienteBase(){
+  const s = state.base, r = s && rutinaBase(s.id);
+  if(!r || s.bloque==null || !state.plan || !state.routine) return null;
+  const actual = bloqueDe(semanaActual());
+  if(!actual) return 'fin';
+  return actual.i!==s.bloque && actual.i < planBase(r).length ? actual : null;
+}
+function pasarAlBloqueBase(i){
+  if(!confirm('Se cambian los días de la rutina por los de este bloque. Si habías cambiado algún ejercicio, vuelve el original. Tu historial no cambia.')) return;
+  cargarRutinaBase({...state.base, bloque: i}, false);
+  render();
+}
+
 /* ---------- navegacion ---------- */
 let currentTab = state.currentTab || 'inicio';
 let sessionView = state.sessionView || 'activa';
@@ -667,6 +725,7 @@ function guardarRutinaLeida(parsed, txt){
       // un PLAN nuevo arranca desde la semana 1; sin PLAN, se sigue en el plan y la semana actuales
       if(parsed.plan){ state.plan = {bloques: parsed.plan}; state.semana = 1; state.aviso = null; }
       state.routine = {days: parsed.days};
+      state.base = null;
       parsed.aparte.forEach(guardarAparte);
       rutinaSub = null;
       if(reemplazando && (parsed.plan || confirm('¿Arrancar la rutina nueva desde el Día 1?'))){ state.slot = 0; state.aviso = null; }
@@ -883,8 +942,6 @@ function diaToText(day, idx){ return [`DIA ${idx+1}: ${day.name}`, ...ejercicios
 
 
 
-
-/* ---------- pantalla: inicio ---------- */
 
 /* ---------- pantalla: sesión ---------- */
 // sessionView (activa | sustituir | resumen) ya declarado arriba, junto a currentTab
@@ -1677,6 +1734,7 @@ function screenSinRutina(){
   wrap.appendChild(bloqueCargaRutina('Cargar rutina', cargarRutina));
   wrap.appendChild(etiqueta('Otras formas de empezar'));
   const otras = el(`<div class="pila" style="gap:8px"></div>`);
+  otras.appendChild(boton(`${icon('list')} Elegir una rutina armada`, 'btn-full', abrirRutinasBase));
   otras.appendChild(boton(`${icon('plus')} Armarla a mano, eligiendo ejercicios`, 'btn-full', agregarDiaAMano));
   otras.appendChild(boton(`${icon('wand')} Armar tu entrenador con una IA`, 'btn-full', abrirKit));
   wrap.appendChild(otras);
@@ -1691,6 +1749,93 @@ function screenSinRutina(){
   return wrap;
 }
 
+/* ---------- pantalla: elegir una rutina armada ---------- */
+const OBJETIVOS_BASE = [['musculo', 'Músculo'], ['fuerza', 'Fuerza'], ['peso', 'Bajar peso'], ['salud', 'Salud']];
+const LUGARES_BASE = [['gimnasio', 'Gimnasio'], ['casa', 'Casa (mancuernas)'], ['sin', 'Sin equipo']];
+let eleccionBase = null;   // lo que se va eligiendo en pantalla: {objetivo, lugar, id, variante, dias, plan}
+function abrirRutinasBase(){
+  eleccionBase = {objetivo: 'musculo', lugar: 'gimnasio', id: null, variante: 0, dias: null, plan: false};
+  abrirModal('rutinasBase', screenRutinasBase);
+}
+function enDosDias(r){ return RUTINAS_BASE_DOS_DIAS.includes(r.id); }
+function textoPlanBase(plan){ return plan.map(b=>`${b.nombre} ${b.semanas} sem`).join(' → '); }
+function eleccionArmada(){
+  const s = eleccionBase;
+  return {id: s.id, variante: s.variante, dias: s.dias, bloque: s.plan ? 0 : null};
+}
+function usarRutinaBase(){
+  if(state.routine && !confirm('¿Reemplazar toda la rutina actual por esta? Tu historial no se pierde.')) return;
+  modal = null; rutinaSub = null; rutinaVista = 'dias';
+  currentTab = 'inicio'; state.currentTab = 'inicio';
+  cargarRutinaBase(eleccionArmada(), true);
+  render();
+}
+function screenRutinasBase(){
+  const s = eleccionBase;
+  if(s.id) return screenRutinaBaseElegida();
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(cerrarModal));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Elegir una rutina armada</h2>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">Rutinas generales para empezar hoy. No reemplazan a un entrenador ni tienen en cuenta lesiones: si algo te duele o tenés un problema de salud, consultá antes.</p>`));
+  const lugares = LUGARES_BASE.filter(([l])=>RUTINAS_BASE.some(r=>r.objetivo===s.objetivo && r.lugar===l));
+  if(!lugares.some(([l])=>l===s.lugar)) s.lugar = lugares[0][0];
+  wrap.appendChild(etiqueta('Objetivo'));
+  wrap.appendChild(segmentado(OBJETIVOS_BASE, s.objetivo, v=>{ s.objetivo = v; render(); }));
+  wrap.appendChild(etiqueta('Dónde entrenás'));
+  wrap.appendChild(segmentado(lugares, s.lugar, v=>{ s.lugar = v; render(); }));
+  const lista = el(`<div class="pila"></div>`);
+  RUTINAS_BASE.filter(r=>r.objetivo===s.objetivo && r.lugar===s.lugar).forEach(r=>{
+    const dias = enDosDias(r) ? '2 O 3 DÍAS POR SEMANA' : `${r.dias.length} DÍAS POR SEMANA`;
+    const card = el(`<div class="card" style="padding:14px 16px"><p class="muted" style="font-size:12px;font-weight:600">${dias}</p><h2 style="margin:2px 0 6px">${esc(r.nombre)}</h2><p class="secondary" style="font-size:13px;margin-bottom:12px">${esc(r.resumen)}</p></div>`);
+    card.appendChild(boton('Ver esta rutina', 'btn-full', ()=>{ s.id = r.id; s.variante = 0; s.dias = enDosDias(r) ? 3 : null; s.plan = false; render(); }));
+    lista.appendChild(card);
+  });
+  wrap.appendChild(lista);
+  return wrap;
+}
+function screenRutinaBaseElegida(){
+  const s = eleccionBase, r = rutinaBase(s.id), plan = planBase(r);
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ s.id = null; render(); }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">${esc(r.nombre)}</h2>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">${esc(r.resumen)}</p>`));
+  wrap.appendChild(etiqueta('Ejercicios'));
+  wrap.appendChild(segmentado([[0, 'Variante A'], [1, 'Variante B']], s.variante, v=>{ s.variante = v; render(); }));
+  wrap.appendChild(el(`<p class="muted" style="font-size:13px;margin:-4px 0 12px">La misma rutina con otros ejercicios. Cuando una te canse, pasá a la otra.</p>`));
+  if(enDosDias(r)){
+    wrap.appendChild(etiqueta('Días por semana'));
+    wrap.appendChild(segmentado([[2, '2 días'], [3, '3 días']], s.dias, v=>{ s.dias = v; render(); }));
+  }
+  if(plan){
+    wrap.appendChild(grupo(itemFila({titulo: 'Plan por bloques', sub: textoPlanBase(plan), derecha: interruptor(s.plan, 'Plan por bloques', v=>{ s.plan = v; render(); })})));
+    wrap.appendChild(el(`<p class="muted" style="font-size:13px;margin:8px 0 12px">${s.plan ? 'Cuando termina un bloque, la app te avisa en Inicio y carga la rutina del siguiente: mismos ejercicios, con otras series, repeticiones y descansos.' : 'Sin plan, la rutina queda igual todas las semanas.'}</p>`));
+  }
+  wrap.appendChild(etiqueta('Así queda'));
+  const lista = el(`<div class="pila"></div>`);
+  parseRoutine(textoRutinaBase(eleccionArmada())).days.forEach((d, i)=>{
+    const card = el(`<div class="card" style="padding:14px 16px"><p class="muted" style="font-size:12px;font-weight:600">DÍA ${i+1}</p><h2 style="margin-top:2px">${esc(d.name)}</h2></div>`);
+    card.appendChild(listaEjerciciosRutina(d.exercises));
+    lista.appendChild(card);
+  });
+  wrap.appendChild(lista);
+  wrap.appendChild(boton('Usar esta rutina', 'btn-primary btn-full', usarRutinaBase));
+  wrap.lastChild.style.marginTop = '12px';
+  wrap.appendChild(el(`<p class="muted" style="font-size:13px;margin-top:8px">Después la podés editar: cambiar ejercicios, series o días.</p>`));
+  return wrap;
+}
+// en Inicio: con una rutina armada y su plan, el paso al bloque siguiente (o qué hacer cuando el plan terminó)
+function tarjetaBloqueBase(pendiente){
+  const s = state.base, fin = pendiente==='fin';
+  const texto = fin ? 'Terminaste el plan. Podés repetirlo con la otra variante de ejercicios o elegir otra rutina.'
+    : `Empieza el bloque ${pendiente.bloque.nombre} (${pendiente.bloque.semanas} sem): ${planBase(rutinaBase(s.id))[pendiente.i].detalle}.`;
+  const card = el(`<div class="card" style="padding:14px 16px;margin-bottom:12px"><p style="font-size:14px;margin-bottom:10px">${esc(texto)}</p></div>`);
+  if(!fin){ card.appendChild(boton('Cargar la rutina de este bloque', 'btn-primary btn-full', ()=>pasarAlBloqueBase(pendiente.i))); return card; }
+  card.appendChild(boton(`Repetir con la variante ${s.variante ? 'A' : 'B'}`, 'btn-primary btn-full', ()=>{ cargarRutinaBase({...s, variante: 1 - s.variante, bloque: 0}, true); render(); }));
+  card.appendChild(boton('Elegir otra rutina', 'btn-ghost btn-full', abrirRutinasBase));
+  card.lastChild.style.marginTop = '8px';
+  return card;
+}
+
 /* ---------- pantalla: inicio ---------- */
 function screenInicio(){
   const wrap = document.createElement('div');
@@ -1700,7 +1845,9 @@ function screenInicio(){
   const ses = state.activeSession;
   wrap.appendChild(encabezado('Entreno', botonesMusica()));
 
-  if(state.aviso){
+  const bloquePendiente = bloquePendienteBase();
+  if(bloquePendiente) wrap.appendChild(tarjetaBloqueBase(bloquePendiente));
+  else if(state.aviso){
     const b = el(`<button class="banner">${icon('wand')}<span>${esc(textoAviso(state.aviso))}</span></button>`);
     b.onclick = ()=>{ histVista='sesiones'; histDetalle=null; setTab('historial'); };
     wrap.appendChild(b);
@@ -1905,6 +2052,8 @@ function screenRutinaNueva(){
   wrap.appendChild(el(`<h2 style="margin-bottom:6px">Cargar rutina nueva</h2>`));
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">Reemplaza todos los días. Tu historial no se pierde.</p>`));
   wrap.appendChild(bloqueCargaRutina('Reemplazar rutina completa', ()=>{ if(confirm('¿Reemplazar toda la rutina actual por esta nueva?')) cargarRutina(); }));
+  wrap.appendChild(boton(`${icon('list')} Elegir una rutina armada`, 'btn-full', abrirRutinasBase));
+  wrap.lastChild.style.marginTop = '8px';
   return wrap;
 }
 function contenidoAparte(){
@@ -1922,6 +2071,9 @@ function contenidoAparte(){
   fila.appendChild(boton(`${icon('upload')} Pegar rutina`, 'btn-full', ()=>{ rutinaSub='aparteNueva'; render(); }));
   fila.appendChild(boton(`${icon('plus')} Armar a mano`, 'btn-full', nuevaAparteAMano));
   box.appendChild(fila);
+  const sugeridas = APARTE_BASE.filter(x=>!aparteConNombre(x.nombre));
+  if(sugeridas.length) box.appendChild(etiqueta('Ya armadas, para sumar'));
+  if(sugeridas.length) box.appendChild(grupo(...sugeridas.map(x=>itemFila({titulo: x.nombre, sub: x.resumen, derecha: boton(`${icon('plus')} Sumar`, 'btn-sm', ()=>{ guardarAparte(parseRoutine(x.texto).aparte[0]); saveState(); render(); sincronizarDrive(true); })}))));
   return box;
 }
 // a mano: se elige el primer ejercicio y se sigue en el editor. alCrear guarda la rutina nueva y devuelve [tipo, índice].
