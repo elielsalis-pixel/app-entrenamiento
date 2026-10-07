@@ -13,4 +13,5 @@ node --check /tmp/entreno-app.js && echo "Sintaxis OK ($(wc -l < /tmp/entreno-ap
 python3 -m http.server 8765 >/dev/null 2>&1 & SRV=$!
 trap "kill $SRV" EXIT
 sleep 1
+node tests/intermediario.test.mjs
 NODE_PATH="${NODE_PATH:-$(npm root -g)}" node tests/app.test.js
