@@ -768,10 +768,18 @@ function screenEntendido(leida, noLeidas, txt){
   wrap.appendChild(botonConvertirConIA());
   return wrap;
 }
+// el mensaje lleva adentro los nombres de todos los ejercicios (los de la app y los propios), agrupados por movimiento
+function mensajeConvertir(){
+  const grupos = Object.keys(PATRONES).map(p=>{
+    const nombres = bibliotecaCompleta().filter(x=>x.patron===p).map(x=>x.nombre).sort((a,b)=>a.localeCompare(b, 'es'));
+    return nombres.length ? `${PATRONES[p]}:\n${nombres.join('\n')}` : '';
+  });
+  return MENSAJE_CONVERTIR.replace('{ejercicios}', grupos.filter(Boolean).join('\n\n'));
+}
 function botonConvertirConIA(){
   const box = document.createElement('div');
   const msg = el(`<div style="font-size:12px;color:var(--success);text-align:center"></div>`);
-  box.appendChild(boton('¿La tenés en foto, en PDF o no se lee bien? Copiá este mensaje y pedile a una IA que la convierta', 'btn-link btn-full', ()=>copiarTexto(MENSAJE_CONVERTIR, msg, 'Mensaje copiado: pegalo en tu IA con tu rutina o la foto')));
+  box.appendChild(boton('¿La tenés en foto, en PDF o no se lee bien? Copiá este mensaje y pedile a una IA que la convierta', 'btn-link btn-full', ()=>copiarTexto(mensajeConvertir(), msg, 'Mensaje copiado. Pegalo en tu IA y agregá tu rutina o la foto: te la devuelve con los ejercicios de la app')));
   box.lastChild.style.cssText = 'height:auto;padding:10px 0;line-height:1.35;white-space:normal';
   box.appendChild(msg);
   return box;

@@ -244,22 +244,35 @@ const MENSAJE_INFORME = `Te paso el informe de la app. Analizalo según tus inst
 
 [pegá acá el informe: en la app, Historial > Copiar informe]`;
 
-// Para quien ya tiene su rutina en una foto, un PDF o un texto que la app no llega a leer: cualquier IA la pasa de formato.
-const MENSAJE_CONVERTIR = `Necesito que pases mi rutina de gimnasio al formato exacto de una app. No cambies ejercicios, series ni repeticiones: solo pasala de formato. Si algo no se entiende, preguntame antes de inventarlo.
+// Para quien ya tiene su rutina en una foto, un PDF o un texto que la app no llega a leer: cualquier IA la pasa al formato
+// de la app usando los ejercicios de la biblioteca. {ejercicios} lo completa la app con la lista de nombres (incluye los
+// propios), así el mensaje alcanza solo, sin adjuntar ningún archivo.
+const MENSAJE_CONVERTIR = `Necesito que pases mi rutina de gimnasio al formato exacto de una app y con los nombres de ejercicio que esa app conoce. No cambies la rutina: mismos días, mismo orden, mismas series y repeticiones. Convertila entera en tu primera respuesta: no frenes para preguntar. Lo que no se entienda no lo inventes: resolvelo con las reglas de abajo y dejá la duda anotada al final.
 
-FORMATO (todo dentro de un solo bloque de código, sin texto adentro):
+PASO 1. ADAPTAR LOS EJERCICIOS
+- Abajo está la lista de ejercicios de la app. Para cada ejercicio de mi rutina, buscá el mismo en la lista y escribilo con el nombre de la lista, copiado tal cual (con tildes, mayúsculas y paréntesis).
+- Tené en cuenta cómo se dice en el gimnasio: "polea al pecho" es un jalón, "vuelos laterales" son elevaciones laterales, "camilla" es curl femoral, "sillón" es extensión de cuádriceps, "hack" es sentadilla hack, y así.
+- Si el mismo ejercicio no está, usá el más parecido de la lista: mismo movimiento y mismo equipo si se puede.
+- Si no hay ninguno parecido, dejalo con el nombre de mi rutina.
+
+PASO 2. FORMATO (todo dentro de un solo bloque de código, sin texto adentro)
 DIA 1: Pecho y tríceps
 Press banca plano con barra | descanso 90 | series 3 | reps 8-12
 Plancha | descanso 60 | series 3 | medida seg
 CARDIO: Cinta (caminata)
 
-Reglas:
 - Un renglón "DIA N: nombre" por cada día y un renglón por ejercicio, con los datos separados por " | ".
 - "descanso" va en segundos. Si mi rutina no lo dice, poné 90.
-- "reps" es un rango, por ejemplo 8-12. Si es un número fijo, repetilo: 10-10. Si el ejercicio va por tiempo, no pongas reps y agregá "medida seg".
-- El aeróbico (cinta, bici, elíptica) va en un renglón "CARDIO: máquina", sin más datos.
-- Nombres de ejercicios en español, completos y sin abreviar.
+- "reps" es un rango, por ejemplo 8-12. Si es un número fijo, repetilo: 10-10. Si dice "al fallo" o no dice repeticiones, no pongas reps. Si el ejercicio va por tiempo, no pongas reps y agregá "medida seg".
+- Lo que no es un ejercicio (masajes, estiramientos sueltos, indicaciones) no va en el bloque.
+- El aeróbico (cinta, bici, elíptica) va en un renglón "CARDIO: máquina", sin más datos, con el nombre de la lista.
 - Nada de numeración, viñetas ni comentarios dentro del bloque.
+
+PASO 3. DESPUÉS DEL BLOQUE
+Fuera del bloque, contame en una lista corta: qué ejercicios cambiaste por uno parecido (el mío y el que pusiste), cuáles dejaste con mi nombre porque no están en la app, qué dejaste afuera y qué dudas te quedaron.
+
+EJERCICIOS DE LA APP (agrupados por movimiento)
+{ejercicios}
 
 MI RUTINA:
 [pegá acá tu rutina o adjuntá la foto]`;
