@@ -1056,6 +1056,18 @@ calentar bien antes`;
     await quieto();
     ok('drive: el aviso vuelve a entrar con un toque y guarda', copiaEnDrive().history.length===5 && (await ventanas())===v1+1 && I.canjes===2 && await pd.evaluate(()=>!ajustesDrive().pendiente && ajustesDrive().permiso==='perm-1'));
 
+    // cada ejercicio terminado se guarda en la copia, con la sesión en curso adentro
+    const vAntes = await ventanas(), vecesAntes = archivo('copia-actual.json').veces;
+    await pd.evaluate(()=>{ empezarSesion(todayDayIndex()); setTab('sesion'); const ej = state.activeSession.exercises[0]; ej.sets.forEach((s, i)=>{ s.peso = 40; s.reps = 10; marcarHecha(ej, i); }); });
+    await quieto();
+    ok('drive: al terminar un ejercicio guarda la copia con la sesión en curso, sin ventana', archivo('copia-actual.json').veces===vecesAntes+1 && (await ventanas())===vAntes && copiaEnDrive().history.length===5 && copiaEnDrive().activeSession.exercises[0].sets.every(s=>s.done) && !copiaEnDrive().activeSession.exercises[1].sets.some(s=>s.done) && await pd.isVisible('#cierre'));
+    await pd.evaluate(()=>{ state.marca = 1; saveState(); sincronizarDrive(false); state.marca = 2; saveState(); sincronizarDrive(false); });
+    await quieto(); await quieto();
+    ok('drive: un guardado pedido mientras se está guardando no se pierde', copiaEnDrive().marca===2 && await pd.evaluate(()=>drive.enCola===null && !ajustesDrive().pendiente));
+    await pd.evaluate(()=>{ cerrarCierre(); detenerTimer(); delete state.marca; state.activeSession = null; saveState(); setTab('ajustes'); });
+    ok('drive: Ajustes dice cuándo se guarda', await pd.isVisible('text=Se guarda al terminar cada ejercicio y al finalizar la sesión'));
+    await pd.evaluate(()=>setTab('inicio'));
+
     // informe, ejercicios propios y copias
     await pd.evaluate(()=>{ state.bibliotecaPropia=[{id:'propio-9', nombre:'Remo Hammer casero', alias:['remo hammer casero'], patron:'tiron_h', principal:['Dorsales'], secundarios:[], equipo:'Máquina', tipo:'Propio', nivel:'—', lumbar:'baja', medida:'kg+reps', mecanica:'', fotos:[], propio:true}]; saveState(); setTab('historial'); });
     await pd.click('button:has-text("Copiar informe")');

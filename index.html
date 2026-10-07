@@ -2347,6 +2347,7 @@ const drive = {
   adaptador: null,     // acceso a Drive (el real, o uno de mentira en las pruebas)
   ocupado: false,      // conectando o guardando
   error: '',
+  enCola: null,        // se pidió guardar mientras se estaba guardando: se repite al terminar ({conToque})
   ajena: null,         // copia que está en Drive y no subió este celular: no se pisa sin preguntar
   copias: []           // lo último listado para la pantalla de copias
 };
@@ -2540,7 +2541,8 @@ async function subirCopiaSemanal(texto){
 // queda anotado como pendiente y se sube en el próximo toque que guarde.
 // armar: crea (o reencuentra) la carpeta con sus subcarpetas. informe: texto del informe recién copiado.
 async function sincronizarDrive(conToque, {armar, informe} = {}){
-  if(drive.ocupado || (!armar && !driveActivo())) return;
+  if(!armar && !driveActivo()) return;
+  if(drive.ocupado){ if(!armar) drive.enCola = {conToque}; return; }
   const a = adaptadorDrive();
   if(!conToque && !a.accesoSinVentana()){ guardarAjustesDrive({pendiente: true}); return refrescarDrive(); }
   drive.ocupado = true; drive.error = '';
@@ -2562,6 +2564,9 @@ async function sincronizarDrive(conToque, {armar, informe} = {}){
     if(driveActivo()) guardarAjustesDrive({pendiente: true});
   }
   drive.ocupado = false;
+  const repetir = drive.enCola;
+  drive.enCola = null;
+  if(repetir && !drive.error) return sincronizarDrive(repetir.conToque);
   refrescarDrive();
 }
 // Tiene que arrancar desde un toque: Google no abre su ventana de otra forma.
@@ -2635,7 +2640,7 @@ function bloqueDrive(){
     return box;
   }
   box.appendChild(el(`<p class="secondary" style="font-size:13px">Cuenta: ${esc(d.cuenta)}</p>`));
-  box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Carpeta "${DRIVE_RAIZ}". ${esc(textoEstadoDrive(d))} Se guarda al finalizar cada sesión.</p>`));
+  box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Carpeta "${DRIVE_RAIZ}". ${esc(textoEstadoDrive(d))} Se guarda al terminar cada ejercicio y al finalizar la sesión.</p>`));
   if(drive.ajena) box.appendChild(el(`<p style="font-size:13px;color:var(--warn);margin-bottom:10px">En Drive hay una copia que no salió de este celular: mirá las copias y elegí con cuál seguir.</p>`));
   error();
   const fila = el(`<div class="fila2"></div>`);
@@ -4016,6 +4021,9 @@ function mostrarCierre(ejs){
   const ses = state.activeSession;
   cerrarCierre();
   const todo = ses.exercises.every(exDone);
+  // cada ejercicio terminado queda en la copia de Drive (la sesión en curso va adentro); el último lo guarda el cierre de la sesión.
+  // Sin ventana de Google en medio del entrenamiento: si hiciera falta, queda pendiente.
+  if(!todo) sincronizarDrive(false);
   const sig = todo ? -1 : siguientePendiente(ses, ses.exercises.indexOf(ejs[ejs.length-1]));
   const colores = {subir:'var(--success)', bajar:'var(--warn)', mantener:'var(--text-2)', info:'var(--text-2)'};
   const recs = ejs.map(e=>({e, rec: recomendacion(e)})).filter(o=>o.rec);
