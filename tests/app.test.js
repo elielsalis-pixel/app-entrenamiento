@@ -41,6 +41,10 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await page.reload(); await page.waitForTimeout(300);
 
   // --- pantalla vacía
+  ok('bienvenida: es lo primero en una app nueva', await visible('Entrá con tu cuenta de Google') && await page.isVisible('button:has-text("Entrar con Google")') && !(await visible('Cargá tu rutina')));
+  await tocar('text=Seguir sin Google');
+  ok('bienvenida: se puede seguir sin Google y no vuelve a aparecer', await visible('Cargá tu rutina') && await ev(()=>state.bienvenidaVista===true));
+  await page.reload(); await page.waitForTimeout(300);
   ok('vacía: pide cargar rutina', await visible('Cargá tu rutina'));
   ok('vacía: botón restaurar copia', await page.isVisible('button:has-text("Restaurar")'));
   // --- kit del entrenador: instrucciones y archivos para la IA
@@ -624,6 +628,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('copia: nombre con fecha local', dl.suggestedFilename()===`entreno-copia-${await ev(()=>hoyISO())}.json`);
   await ev(async()=>{ localStorage.clear(); await mediaClear(); });
   await page.reload(); await page.waitForTimeout(300);
+  await tocar('text=Seguir sin Google');
   const [ch2] = await Promise.all([page.waitForEvent('filechooser'), tocar('button:has-text("Restaurar")')]);
   await ch2.setFiles('/tmp/copia-test.json'); await page.waitForTimeout(1200);
   ok('copia: restaura desde pantalla vacía', await ev(()=>state.history.length===2 && state.rutinasAparte.length===1));
@@ -661,7 +666,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   ok('migración: fotos viejas a IndexedDB', await ev(()=>!!media.images['Remo en polea'] && !JSON.parse(localStorage.entrenoState).customImages));
   await ev(()=>{ localStorage.setItem('entrenoState','{roto'); });
   await page.reload(); await page.waitForTimeout(300);
-  ok('estado dañado: la app arranca', await visible('Cargá tu rutina'));
+  ok('estado dañado: la app arranca', await visible('Entrar con Google'));
   await ev(()=>{ Storage.prototype.setItem=function(){ throw new DOMException('x','QuotaExceededError'); }; saveState(); });
   ok('aviso si falla el guardado', await page.isVisible('#avisoGuardado'));
 
@@ -813,6 +818,7 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     const nubeAntes = JSON.stringify(d.indice.actual);
     await pn.evaluate(()=>{ localStorage.removeItem('entrenoState'); localStorage.removeItem('entrenoNube'); localStorage.removeItem('nubeFalsaUsuario'); });
     await pn.reload(); await pn.waitForTimeout(300); await conNube(); await pn.evaluate(()=>render());
+    await pn.click('text=Seguir sin Google');
     ok('datos borrados: ofrece recuperar de la nube', await pn.isVisible('text=Cargá tu rutina') && await pn.isVisible('text=Recuperar mi copia de la nube'));
     await pn.click('text=Recuperar mi copia de la nube'); await pn.waitForTimeout(400);
     ok('datos borrados: muestra la copia encontrada', await pn.isVisible('text=Encontré una copia tuya en la nube') && await pn.isVisible('text=Copia actual'));
@@ -837,6 +843,80 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     ok('nube: apagar deja de subir', await pn.evaluate(()=>{ nube.pendiente=false; saveState(); return !nube.activa && !nube.usuario && !nube.pendiente && !JSON.parse(localStorage.entrenoNube).activa; }) && await pn.isVisible('text=Activar con Google'));
     ok('nube: sin errores de JavaScript', !errN.length, errN.join(' | '));
     await ctxN.close();
+  }
+
+  // --- Google Drive: ingreso, carpeta "Entreno" y archivos del entrenador.
+  // Google se reemplaza por uno de mentira (el ingreso y la API de Drive), así se prueba el código real que le habla.
+  {
+    const ctxD = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
+    const pd = await ctxD.newPage(); const errD=[]; pd.on('pageerror', e=>errD.push(e.message)); pd.on('dialog', d=>d.accept());
+    const D = {n:0, items:[], pedidos:[], sinPermiso:0};   // items: {id, name, parent, carpeta, texto}
+    const CARPETA = 'application/vnd.google-apps.folder';
+    const cors = {'access-control-allow-origin':'*', 'access-control-allow-headers':'*', 'access-control-allow-methods':'GET,POST,PATCH,OPTIONS'};
+    await pd.route('https://accounts.google.com/gsi/client', r=>r.fulfill({contentType:'text/javascript', body:`window.google={accounts:{oauth2:{
+      initTokenClient(cfg){ return {requestAccessToken(){ window.__ventanas=(window.__ventanas||0)+1; setTimeout(()=>window.__falla ? cfg.error_callback({type:window.__falla}) : cfg.callback({access_token:'tok-1', expires_in:3599, scope: window.__permiso===undefined ? cfg.scope : window.__permiso}), 10); }}; },
+      hasGrantedAllScopes(r, s){ return String(r.scope||'').split(' ').includes(s); } }}};`}));
+    await pd.route('https://www.googleapis.com/**', async r=>{
+      const q = r.request(), u = new (require('url').URL)(q.url()), m = q.method();
+      if(m==='OPTIONS') return r.fulfill({status:204, headers:cors});
+      D.pedidos.push(m+' '+u.pathname);
+      const json = (o, status)=>r.fulfill({status: status||200, headers:cors, contentType:'application/json', body:JSON.stringify(o)});
+      if(q.headers().authorization!=='Bearer tok-1'){ D.sinPermiso++; return json({error:{message:'Invalid Credentials'}}, 401); }
+      if(u.pathname==='/drive/v3/about') return json({user:{emailAddress:'prueba@gmail.com'}});
+      if(u.pathname==='/drive/v3/files' && m==='GET'){
+        const c = u.searchParams.get('q'), nombre = c.match(/name='((?:[^'\\\\]|\\\\.)*)'/)[1].replace(/\\\\(.)/g,'$1'), padre = (c.match(/'([^']+)' in parents/)||[])[1], carpeta = c.includes(`mimeType='${CARPETA}'`);
+        return json({files: D.items.filter(i=>i.name===nombre && i.carpeta===carpeta && (!padre || i.parent===padre)).map(i=>({id:i.id}))});
+      }
+      if(u.pathname==='/drive/v3/files' && m==='POST'){ const b = JSON.parse(q.postData()); const it = {id:'id'+(++D.n), name:b.name, parent:(b.parents||[null])[0], carpeta:b.mimeType===CARPETA}; D.items.push(it); return json({id:it.id}); }
+      if(u.pathname==='/upload/drive/v3/files' && m==='POST'){
+        const limite = q.headers()['content-type'].split('boundary=')[1], partes = q.postDataBuffer().toString('utf8').split('--'+limite);
+        const cuerpo = p=>p.slice(p.indexOf('\r\n\r\n')+4).replace(/\r\n$/, '');
+        const meta = JSON.parse(cuerpo(partes[1]));
+        const it = {id:'id'+(++D.n), name:meta.name, parent:meta.parents[0], carpeta:false, texto:cuerpo(partes[2]), tipo:partes[2].match(/Content-Type: (.*)\r\n/)[1]}; D.items.push(it); return json({id:it.id});
+      }
+      const act = u.pathname.match(/^\/upload\/drive\/v3\/files\/(.+)$/);
+      if(act && m==='PATCH'){ const it = D.items.find(i=>i.id===act[1]); if(!it) return json({error:{message:'File not found'}}, 404); it.texto = q.postDataBuffer().toString('utf8'); it.veces = (it.veces||1)+1; return json({id:it.id}); }
+      return json({error:{message:'pedido no previsto: '+m+' '+u.pathname}}, 400);
+    });
+    const hijos = padre=>D.items.filter(i=>i.parent===padre).map(i=>i.name).sort().join();
+    const archivo = n=>D.items.find(i=>i.name===n && !i.carpeta);
+    await pd.goto(URL);
+    await pd.evaluate(()=>localStorage.clear()); await pd.reload(); await pd.waitForTimeout(400);
+    await pd.evaluate(()=>{ window.__falla='popup_closed'; });
+    await pd.click('button:has-text("Entrar con Google")'); await pd.waitForTimeout(400);
+    ok('drive: si se cierra la ventana de Google avisa y no crea nada', await pd.isVisible('text=Cerraste la ventana de Google antes de terminar') && await pd.isVisible('button:has-text("Entrar con Google")') && D.items.length===0 && await pd.evaluate(()=>!driveActivo() && !state.bienvenidaVista));
+    await pd.evaluate(()=>{ window.__falla=null; window.__permiso=''; });
+    await pd.click('button:has-text("Entrar con Google")'); await pd.waitForTimeout(400);
+    ok('drive: sin la casilla de permiso de Drive avisa cómo seguir', await pd.isVisible('text=Falta el permiso para guardar en Drive') && D.items.length===0);
+    await pd.evaluate(()=>{ window.__permiso=undefined; });
+    await pd.click('button:has-text("Entrar con Google")');
+    await pd.waitForFunction(()=>driveActivo(), null, {timeout:8000});
+    const raiz = D.items.find(i=>i.name==='Entreno');
+    ok('drive: crea la carpeta Entreno con sus tres subcarpetas', !!raiz && raiz.carpeta && raiz.parent===null && D.items.filter(i=>i.carpeta).length===4 && D.items.filter(i=>i.carpeta && i.parent===raiz.id).map(i=>i.name).sort().join()==='Copia de seguridad,Informes,Rutinas', JSON.stringify(D.items.map(i=>[i.name,i.parent])));
+    ok('drive: deja en la carpeta los tres archivos del entrenador', hijos(raiz.id)==='Copia de seguridad,Informes,Rutinas,biblioteca-ejercicios.txt,instrucciones-del-entrenador.txt,reglas-para-armar-rutinas.txt' && archivo('instrucciones-del-entrenador.txt').texto===(await pd.evaluate(()=>PROMPT_ENTRENADOR)) && archivo('reglas-para-armar-rutinas.txt').texto===(await pd.evaluate(()=>REGLAS_ENTRENADOR)) && archivo('biblioteca-ejercicios.txt').texto===(await pd.evaluate(()=>bibliotecaATexto())) && archivo('reglas-para-armar-rutinas.txt').texto.includes('DIA 2: Tirón') && archivo('biblioteca-ejercicios.txt').tipo.startsWith('text/plain'));
+    ok('drive: después de entrar abre el kit, que ya habla de Drive', await pd.isVisible('h2:has-text("Tu entrenador")') && await pd.isVisible('.card:has-text("PASO 2"):has-text("ya están en tu Google Drive, en la carpeta Entreno")') && await pd.isVisible('.card:has-text("PASO 5"):has-text("están en tu Google Drive, en la carpeta Entreno")') && !(await pd.textContent('#screen')).includes('{archivos}'));
+    ok('drive: recuerda la cuenta y la carpeta en el celular', await pd.evaluate(id=>{ const d=ajustesDrive(); return d.raiz===id && d.cuenta==='prueba@gmail.com' && !!d.rutinas && !!d.informes && !!d.copia && state.bienvenidaVista===true; }, raiz.id));
+    await pd.click('text=Volver');
+    ok('drive: al volver del kit sigue la carga de la rutina', await pd.isVisible('text=Cargá tu rutina'));
+    await pd.evaluate(r=>{ state.routine={days: parseRoutine(r).days}; state.bibliotecaPropia=[{id:'propio-9', nombre:'Remo Hammer casero', alias:['remo hammer casero'], patron:'tiron_h', principal:['Dorsales'], secundarios:[], equipo:'Máquina', tipo:'Propio', nivel:'—', lumbar:'baja', medida:'kg+reps', mecanica:'', fotos:[], propio:true}]; saveState(); }, RUTINA);
+    await pd.reload(); await pd.waitForTimeout(400);
+    await pd.evaluate(()=>setTab('ajustes'));
+    ok('drive: Ajustes muestra la cuenta conectada', await pd.isVisible('text=Cuenta: prueba@gmail.com') && await pd.isVisible('button:has-text("Actualizar los archivos del entrenador")'));
+    const antes = D.items.length;
+    await pd.click('button:has-text("Actualizar los archivos del entrenador")');
+    await pd.waitForFunction(()=>!drive.conectando, null, {timeout:8000}); await pd.waitForTimeout(100);
+    ok('drive: actualizar reemplaza los archivos sin duplicar nada', D.items.length===antes && archivo('biblioteca-ejercicios.txt').veces===2 && archivo('biblioteca-ejercicios.txt').texto.includes('Remo Hammer casero') && await pd.evaluate(()=>drive.error===''));
+    await pd.evaluate(()=>{ window.__antes = window.__ventanas; });
+    await pd.click('button:has-text("Actualizar los archivos del entrenador")');
+    await pd.waitForFunction(()=>!drive.conectando, null, {timeout:8000});
+    ok('drive: con el acceso vigente no vuelve a abrir la ventana de Google', await pd.evaluate(()=>window.__ventanas===window.__antes) && D.sinPermiso===0);
+    await pd.click('button:has-text("Desconectar de este celular")');
+    ok('drive: desconectar deja la carpeta en Drive y ofrece conectar de nuevo', await pd.isVisible('button:has-text("Conectar Google Drive")') && await pd.evaluate(()=>!driveActivo()) && D.items.length===antes);
+    await pd.click('button:has-text("Conectar Google Drive")');
+    await pd.waitForFunction(()=>driveActivo(), null, {timeout:8000});
+    ok('drive: al reconectar reencuentra la misma carpeta', await pd.evaluate(id=>ajustesDrive().raiz===id, raiz.id) && D.items.length===antes);
+    ok('drive: sin errores de JavaScript', !errD.length, errD.join(' | '));
+    await ctxD.close();
   }
 
   // --- rotación con 4 días y aviso de bloque

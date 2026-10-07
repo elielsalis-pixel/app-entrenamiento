@@ -1490,6 +1490,7 @@ function dibujar(){
   const s = document.getElementById('screen');
   s.innerHTML = '';
   if(modal) s.appendChild(modal.pintar());
+  else if(!state.routine && !state.bienvenidaVista) s.appendChild(screenBienvenida());
   else if(!state.routine) s.appendChild(screenSinRutina());
   else if(currentTab==='inicio') s.appendChild(screenInicio());
   else if(currentTab==='sesion') s.appendChild(screenSesionWrap());
@@ -1518,6 +1519,27 @@ function bloqueCargaRutina(textoBoton, onCargar){
   box.appendChild(boton(textoBoton, 'btn-primary btn-full', onCargar));
   box.lastChild.style.marginTop = '12px';
   return box;
+}
+/* ---------- pantalla: bienvenida (la primera vez, antes de cargar una rutina) ---------- */
+function terminarBienvenida(){ state.bienvenidaVista = true; saveState(); }
+function screenBienvenida(){
+  precargarGoogle();
+  const wrap = document.createElement('div');
+  wrap.appendChild(encabezado('Entreno'));
+  wrap.appendChild(el(`<p class="secondary" style="margin-bottom:16px">Registrá tus entrenamientos y dejá que la IA que ya usás te arme las rutinas.</p>`));
+  const card = el(`<div class="card"><p style="font-weight:600;margin-bottom:4px">Entrá con tu cuenta de Google</p><p class="secondary" style="font-size:13px;margin-bottom:12px">La app crea una carpeta "Entreno" en tu Google Drive y guarda ahí tus cosas, para que no dependan de este celular. Solo puede ver lo que ella misma crea, no el resto de tu Drive.</p></div>`);
+  card.appendChild(boton(drive.conectando ? 'Conectando…' : 'Entrar con Google', 'btn-primary btn-full', async()=>{
+    await conectarDrive();
+    if(!driveActivo()) return;
+    terminarBienvenida();
+    abrirKit();
+  }));
+  if(drive.error) card.appendChild(el(`<p style="font-size:13px;color:var(--danger);margin-top:8px">${esc(drive.error)}</p>`));
+  wrap.appendChild(card);
+  wrap.appendChild(boton('Seguir sin Google', 'btn-ghost btn-full', ()=>{ terminarBienvenida(); render(); }));
+  wrap.lastChild.style.marginTop = '8px';
+  wrap.appendChild(el(`<p class="muted" style="font-size:12px;text-align:center">Podés conectarlo después desde Ajustes. Si ya tenías una copia de seguridad, la restaurás en la pantalla que sigue.</p>`));
+  return wrap;
 }
 function screenSinRutina(){
   const wrap = document.createElement('div');
@@ -1828,6 +1850,8 @@ function screenAjustes(){
   filaCopia.appendChild(botonRestaurar());
   copia.appendChild(filaCopia);
   wrap.appendChild(nubeDisponible() ? grupo(copia, bloqueNube()) : grupo(copia));
+  wrap.appendChild(etiqueta('Google Drive'));
+  wrap.appendChild(grupo(bloqueDrive()));
 
   wrap.appendChild(etiqueta('Durante el descanso'));
   const permiso = window.Notification ? Notification.permission : 'unsupported';
@@ -1958,9 +1982,12 @@ function screenKit(){
     elegir.appendChild(el(`<p class="muted" style="font-size:12px;margin-top:8px">${esc(guia.nota)}</p>`));
     pasos.appendChild(elegir);
     // los archivos se bajan antes de ir a la IA: así no hay que salir a buscarlos con el proyecto a medio crear
-    pasos.appendChild(tarjeta('PASO 2', 'Descargá estos dos archivos: las reglas del formato y la lista de ejercicios. Quedan en las descargas del celular.', [
+    const enDrive = driveActivo();
+    const dondeEstan = enDrive ? 'están en tu Google Drive, en la carpeta Entreno' : 'están en las descargas del celular';
+    pasos.appendChild(tarjeta('PASO 2', enDrive ? 'Las reglas del formato y la lista de ejercicios ya están en tu Google Drive, en la carpeta Entreno. Si preferís, también podés descargarlas al celular.'
+      : 'Descargá estos dos archivos: las reglas del formato y la lista de ejercicios. Quedan en las descargas del celular.', [
       ['down', 'Reglas', bajar(ARCHIVO_REGLAS, ()=>REGLAS_ENTRENADOR)], ['down', 'Biblioteca', bajar(ARCHIVO_BIBLIOTECA, bibliotecaATexto)]]));
-    guia.pasos.forEach(([texto, accion], i)=>pasos.appendChild(tarjeta(`PASO ${i+3}`, texto, ACCIONES[accion])));
+    guia.pasos.forEach(([texto, accion], i)=>pasos.appendChild(tarjeta(`PASO ${i+3}`, texto.replace('{archivos}', dondeEstan), ACCIONES[accion])));
     pasos.appendChild(tarjeta('MÁS ADELANTE', 'La IA te hace unas preguntas y te da la rutina lista para pegar acá. Para que la ajuste más adelante, mandale este mensaje y, debajo, tu informe (Historial > Copiar informe). Si agregás ejercicios propios, descargá de nuevo la biblioteca y cambiala por la vieja en tu IA.', [
       ['copy', 'Copiar mensaje para el informe', msg=>copiarTexto(MENSAJE_INFORME, msg, 'Mensaje copiado: pegale el informe abajo')]]));
   };
@@ -1968,6 +1995,145 @@ function screenKit(){
   wrap.appendChild(pasos);
   return wrap;
 }
+/* ---------- Google Drive: la carpeta "Entreno" de cada usuario ---------- */
+// Identificador público de la app ante Google. El permiso pedido solo alcanza a los archivos que la app misma crea.
+const DRIVE_CLIENT_ID = '739404554059-2elvpkvd25oaj1e69ufm1nmsr8sbkde6.apps.googleusercontent.com';
+const DRIVE_PERMISO = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_RAIZ = 'Entreno';
+const DRIVE_CARPETAS = {rutinas: 'Rutinas', informes: 'Informes', copia: 'Copia de seguridad'};
+const TIPO_CARPETA = 'application/vnd.google-apps.folder';
+const ARCHIVO_INSTRUCCIONES = 'instrucciones-del-entrenador.txt';
+const drive = {
+  adaptador: null,     // acceso a Drive (el real, o uno de mentira en las pruebas)
+  conectando: false,
+  error: ''
+};
+// En este celular se recuerda la carpeta y la cuenta: {raiz, rutinas, informes, copia, cuenta, kit}
+function ajustesDrive(){
+  try{ return JSON.parse(localStorage.getItem('entrenoDrive')) || {}; }
+  catch(e){ return {}; }   // ajustes ilegibles: se arranca sin Drive y el usuario lo vuelve a conectar
+}
+function guardarAjustesDrive(cambios){ localStorage.setItem('entrenoDrive', JSON.stringify({...ajustesDrive(), ...cambios})); }
+function driveActivo(){ return !!ajustesDrive().raiz; }
+
+let googleCargando = null;
+function cargarGoogle(){
+  if(!googleCargando) googleCargando = new Promise((res, rej)=>{
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = res;
+    s.onerror = ()=>{ googleCargando = null; s.remove(); rej(new Error('No se pudo cargar el ingreso de Google. Revisá la conexión.')); };
+    document.head.appendChild(s);
+  });
+  return googleCargando;
+}
+// La ventana de Google solo se abre si se la pide en el mismo toque: por eso el ingreso se deja cargado al mostrar el botón.
+let googlePrecargado = false;
+function precargarGoogle(){
+  if(googlePrecargado || drive.adaptador || !navigator.onLine) return;
+  googlePrecargado = true;
+  cargarGoogle().catch(e=>console.warn('Ingreso de Google sin precargar; se reintenta al tocar el botón.', e));
+}
+function adaptadorGoogleDrive(){
+  const API = 'https://www.googleapis.com/drive/v3', SUBIDA = 'https://www.googleapis.com/upload/drive/v3';
+  let token = null, vence = 0;
+  const pedir = async(url, opciones = {})=>{
+    const r = await fetch(url, {...opciones, headers: {...opciones.headers, Authorization: 'Bearer ' + token}});
+    if(!r.ok){
+      const d = await r.json().catch(()=>null);   // un error sin detalle legible se informa con su código
+      throw new Error((d && d.error && d.error.message) || `Google respondió ${r.status}`);
+    }
+    return r.json();
+  };
+  const MOTIVOS = {popup_closed: 'Cerraste la ventana de Google antes de terminar.', popup_failed_to_open: 'El navegador bloqueó la ventana de Google. Tocá de nuevo.'};
+  return {
+    // el acceso dura cerca de una hora; mientras sirve no se vuelve a pedir
+    pedirAcceso: async()=>{
+      if(token && Date.now() < vence) return;
+      await cargarGoogle();
+      await new Promise((res, rej)=>{
+        google.accounts.oauth2.initTokenClient({client_id: DRIVE_CLIENT_ID, scope: DRIVE_PERMISO,
+          callback: r=>{
+            if(r.error) return rej(new Error(r.error_description || r.error));
+            if(!google.accounts.oauth2.hasGrantedAllScopes(r, DRIVE_PERMISO)) return rej(new Error('Falta el permiso para guardar en Drive: volvé a entrar y dejá marcada esa casilla.'));
+            token = r.access_token; vence = Date.now() + (r.expires_in - 60) * 1000;
+            res();
+          },
+          error_callback: e=>rej(new Error(MOTIVOS[e.type] || e.message || e.type))
+        }).requestAccessToken();
+      });
+    },
+    cuenta: async()=>(await pedir(`${API}/about?fields=user(emailAddress)`)).user.emailAddress,
+    buscar: async(nombre, padre, tipo)=>{
+      const q = [`name='${nombre.replace(/['\\]/g, '\\$&')}'`, 'trashed=false', `mimeType${tipo===TIPO_CARPETA ? '=' : '!='}'${TIPO_CARPETA}'`];
+      if(padre) q.push(`'${padre}' in parents`);
+      const d = await pedir(`${API}/files?spaces=drive&fields=files(id)&q=${encodeURIComponent(q.join(' and '))}`);
+      return d.files.length ? d.files[0].id : null;
+    },
+    crearCarpeta: async(nombre, padre)=>(await pedir(`${API}/files?fields=id`, {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: nombre, mimeType: TIPO_CARPETA, ...(padre ? {parents: [padre]} : {})})})).id,
+    // con id reemplaza el contenido; sin id crea el archivo en esa carpeta
+    guardar: async(id, nombre, padre, texto, tipo)=>{
+      if(id) return (await pedir(`${SUBIDA}/files/${id}?uploadType=media&fields=id`, {method: 'PATCH', headers: {'Content-Type': tipo}, body: texto})).id;
+      const limite = 'entreno' + Date.now();
+      const cuerpo = `--${limite}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name: nombre, parents: [padre]})}\r\n--${limite}\r\nContent-Type: ${tipo}\r\n\r\n${texto}\r\n--${limite}--`;
+      return (await pedir(`${SUBIDA}/files?uploadType=multipart&fields=id`, {method: 'POST', headers: {'Content-Type': `multipart/related; boundary=${limite}`}, body: cuerpo})).id;
+    }
+  };
+}
+function adaptadorDrive(){ return drive.adaptador || (drive.adaptador = adaptadorGoogleDrive()); }
+// usa la carpeta si ya existe (por ejemplo, creada desde otro celular); si no, la crea
+async function carpetaDrive(nombre, padre){
+  const a = adaptadorDrive();
+  return await a.buscar(nombre, padre, TIPO_CARPETA) || a.crearCarpeta(nombre, padre);
+}
+async function guardarEnDrive(nombre, padre, texto){
+  const a = adaptadorDrive();
+  return a.guardar(await a.buscar(nombre, padre), nombre, padre, texto, 'text/plain; charset=UTF-8');
+}
+// lo que se le da a la IA: queda en la carpeta para cargarlo desde Drive
+async function guardarKitEnDrive(raiz){
+  await guardarEnDrive(ARCHIVO_INSTRUCCIONES, raiz, PROMPT_ENTRENADOR);
+  await guardarEnDrive(ARCHIVO_REGLAS, raiz, REGLAS_ENTRENADOR);
+  await guardarEnDrive(ARCHIVO_BIBLIOTECA, raiz, bibliotecaATexto());
+}
+// Tiene que arrancar desde un toque: Google no abre su ventana de otra forma.
+// Arma (o reencuentra) la carpeta con sus subcarpetas y deja adentro los archivos del entrenador.
+async function conectarDrive(){
+  if(drive.conectando) return;
+  drive.conectando = true; drive.error = '';
+  render();
+  try{
+    const a = adaptadorDrive();
+    await a.pedirAcceso();
+    const carpetas = {raiz: await carpetaDrive(DRIVE_RAIZ, null)};
+    for(const k of Object.keys(DRIVE_CARPETAS)) carpetas[k] = await carpetaDrive(DRIVE_CARPETAS[k], carpetas.raiz);
+    await guardarKitEnDrive(carpetas.raiz);
+    guardarAjustesDrive({...carpetas, cuenta: await a.cuenta(), kit: Date.now()});
+  } catch(e){
+    drive.error = 'No se pudo conectar con Google Drive: ' + (e.message || e);
+  }
+  drive.conectando = false;
+  render();
+}
+function desconectarDrive(){ localStorage.removeItem('entrenoDrive'); drive.error = ''; render(); }
+function bloqueDrive(){
+  const box = el(`<div style="padding:14px"></div>`);
+  const d = ajustesDrive();
+  if(!d.raiz){
+    precargarGoogle();
+    box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Crea una carpeta "Entreno" en tu Google Drive con los archivos para tu entrenador. La app solo puede ver lo que ella misma crea, no el resto de tu Drive.</p>`));
+  } else {
+    box.appendChild(el(`<p class="secondary" style="font-size:13px">Cuenta: ${esc(d.cuenta)}</p>`));
+    box.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:10px">Carpeta "${DRIVE_RAIZ}" · archivos del entrenador guardados el ${esc(fechaHoraCorta(d.kit))}</p>`));
+  }
+  if(drive.error) box.appendChild(el(`<p style="font-size:13px;color:var(--danger);margin-bottom:10px">${esc(drive.error)}</p>`));
+  const rotulo = d.raiz ? 'Actualizar los archivos del entrenador' : 'Conectar Google Drive';
+  box.appendChild(boton(drive.conectando ? 'Conectando…' : rotulo, d.raiz ? 'btn-full' : 'btn-primary btn-full', conectarDrive));
+  if(d.raiz) box.appendChild(boton('Desconectar de este celular', 'btn-ghost btn-sm btn-full', ()=>{ if(confirm('¿Desconectar Google Drive en este celular? La carpeta y sus archivos quedan en tu Drive.')) desconectarDrive(); }));
+  return box;
+}
+
 function screenAjusteSugerido(){
   const wrap = document.createElement('div');
   wrap.appendChild(botonVolver(()=>{ ajustesVista=null; render(); }));

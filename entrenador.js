@@ -210,30 +210,31 @@ Revisiones
 
 // Cómo dejar armado el entrenador en cada IA, en el orden en que se hace desde un celular. Antes de estos pasos la app
 // ya hizo descargar los dos archivos. Un paso puede traer lo que hay que llevar a la IA en ese momento: 'instrucciones'
-// o 'mensaje' (la app pone ahí el botón para copiar).
+// o 'mensaje' (la app pone ahí el botón para copiar). {archivos} es dónde quedaron los dos archivos: la app lo completa
+// con las descargas del celular o con la carpeta de Google Drive.
 // Los nombres de los botones son los de la ayuda oficial de cada IA (revisados en octubre de 2026).
 const GUIAS_IA = {
   claude: {nombre: 'Claude', pasos: [
     ['Abrí la app de Claude (o claude.ai), entrá a "Proyectos" y tocá "Nuevo proyecto". Ponele de nombre "Entrenador". Un proyecto es un lugar donde Claude guarda tus instrucciones y tus archivos.'],
     ['Tocá este botón para copiar las instrucciones. En Claude, pegalas en las instrucciones del proyecto y guardá.', 'instrucciones'],
-    ['En el proyecto, agregá los dos archivos que descargaste: están en las descargas del celular.'],
+    ['En el proyecto, agregá los dos archivos que descargaste: {archivos}.'],
     ['Tocá este botón para copiar el primer mensaje. En Claude, abrí un chat dentro del proyecto (no un chat suelto), pegalo y envialo.', 'mensaje']],
     nota: 'En Claude se llama Proyecto. Con la cuenta gratis alcanza.'},
   gemini: {nombre: 'Gemini', pasos: [
     ['Abrí el navegador del celular (Chrome) y entrá a gemini.google.com. Tiene que ser ahí: la app de Gemini no deja crear Gems, solo usarlos.'],
     ['Abrí el menú, entrá a "Gems" y tocá "Nueva Gem". Ponele de nombre "Entrenador". Un Gem es un asistente con tus instrucciones guardadas.'],
     ['Tocá este botón para copiar las instrucciones. En Gemini, pegalas en las instrucciones del Gem.', 'instrucciones'],
-    ['En "Conocimiento", tocá "Agregar archivos" y elegí los dos que descargaste: están en las descargas del celular. Después tocá "Guardar".'],
+    ['En "Conocimiento", tocá "Agregar archivos" y elegí los dos que descargaste: {archivos}. Después tocá "Guardar".'],
     ['Tocá este botón para copiar el primer mensaje. Abrí tu Gem, pegalo y envialo.', 'mensaje']],
     nota: 'En Gemini se llama Gem.'},
   chatgpt: {nombre: 'ChatGPT', pasos: [
     ['Abrí la app de ChatGPT (o chatgpt.com) y, en el menú lateral, tocá "Nuevo proyecto". Ponele de nombre "Entrenador". Un proyecto es un lugar donde ChatGPT guarda tus instrucciones y tus archivos.'],
     ['Tocá este botón para copiar las instrucciones. En ChatGPT, dentro del proyecto, abrí el menú de los tres puntos, entrá a "Configuración del proyecto" y pegalas ahí.', 'instrucciones'],
-    ['Agregá al proyecto los dos archivos que descargaste: están en las descargas del celular.'],
+    ['Agregá al proyecto los dos archivos que descargaste: {archivos}.'],
     ['Tocá este botón para copiar el primer mensaje. En ChatGPT, abrí un chat dentro del proyecto (no un chat suelto), pegalo y envialo.', 'mensaje']],
     nota: 'En ChatGPT se llama Proyecto; no hace falta crear un "GPT". Con la cuenta gratis alcanza.'},
   otra: {nombre: 'Otra', pasos: [
-    ['Abrí un chat nuevo en la IA que uses y adjuntá los dos archivos que descargaste: están en las descargas del celular.'],
+    ['Abrí un chat nuevo en la IA que uses y adjuntá los dos archivos que descargaste: {archivos}.'],
     ['Tocá este botón para copiar las instrucciones, pegalas en ese mismo mensaje y envialo.', 'instrucciones'],
     ['Tocá este botón para copiar el primer mensaje, pegalo y envialo.', 'mensaje']],
     nota: 'Con esta opción no queda guardado: hay que repetirlo en cada chat nuevo.'}
