@@ -243,3 +243,23 @@ const MENSAJE_INICIO = 'Hola. Quiero que seas mi entrenador. Es la primera vez q
 const MENSAJE_INFORME = `Te paso el informe de la app. Analizalo según tus instrucciones y decime qué ajustarías, con el porqué de cada cambio.
 
 [pegá acá el informe: en la app, Historial > Copiar informe]`;
+
+// Para quien ya tiene su rutina en una foto, un PDF o un texto que la app no llega a leer: cualquier IA la pasa de formato.
+const MENSAJE_CONVERTIR = `Necesito que pases mi rutina de gimnasio al formato exacto de una app. No cambies ejercicios, series ni repeticiones: solo pasala de formato. Si algo no se entiende, preguntame antes de inventarlo.
+
+FORMATO (todo dentro de un solo bloque de código, sin texto adentro):
+DIA 1: Pecho y tríceps
+Press banca plano con barra | descanso 90 | series 3 | reps 8-12
+Plancha | descanso 60 | series 3 | medida seg
+CARDIO: Cinta (caminata)
+
+Reglas:
+- Un renglón "DIA N: nombre" por cada día y un renglón por ejercicio, con los datos separados por " | ".
+- "descanso" va en segundos. Si mi rutina no lo dice, poné 90.
+- "reps" es un rango, por ejemplo 8-12. Si es un número fijo, repetilo: 10-10. Si el ejercicio va por tiempo, no pongas reps y agregá "medida seg".
+- El aeróbico (cinta, bici, elíptica) va en un renglón "CARDIO: máquina", sin más datos.
+- Nombres de ejercicios en español, completos y sin abreviar.
+- Nada de numeración, viñetas ni comentarios dentro del bloque.
+
+MI RUTINA:
+[pegá acá tu rutina o adjuntá la foto]`;

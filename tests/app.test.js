@@ -845,6 +845,74 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
     await ctxN.close();
   }
 
+  // --- rutina propia: lector flexible, armado a mano y mensaje para convertirla con una IA
+  {
+    const pl = await ctx.newPage(); const errL=[]; pl.on('pageerror', e=>errL.push(e.message)); const dl=[]; pl.on('dialog', d=>{ dl.push(d.message()); d.accept(); });
+    await pl.goto(URL);
+    await pl.evaluate(()=>{ localStorage.clear(); }); await pl.reload(); await pl.waitForTimeout(300);
+    await pl.click('text=Seguir sin Google');
+    const LIBRE = `Lunes - Pecho y tríceps
+Press banca plano con barra 4x8
+Press inclinado con mancuernas 3 x 10-12
+- Fondos para tríceps: 3 series de 12 (descanso 90s)
+Miércoles: Espalda
+1. Dominadas 4x al fallo
+2. Remo con barra 4x8 60kg
+3) Curl de bíceps con mancuernas 3x12 por lado descanso 1 min
+Cinta 20 min
+Viernes
+Sentadilla goblet 5x5 desc 2:30
+Plancha 3x30s
+calentar bien antes`;
+    const leido = await pl.evaluate(t=>{ const l = traducirRutinaLibre(t), p = parseRoutine(l.texto); return {no: l.noLeidas, dias: p.days.map(d=>d.name), ej: p.days.map(d=>d.exercises.map(e=>e.cardio ? 'cardio:'+e.nombre : [e.nombre, e.series, e.repsMin, e.repsMax, e.medida||'', e.descanso].join('/')))}; }, LIBRE);
+    ok('lector flexible: días y ejercicios escritos como los escribe la gente', leido.dias.join('|')==='Lunes - Pecho y tríceps|Miércoles: Espalda|Viernes'
+      && leido.ej[0].join(' ; ')==='Press banca plano con barra/4/8/8//90 ; Press inclinado con mancuernas/3/10/12//90 ; Fondos para tríceps/3/12/12/reps/90'
+      && leido.ej[1].join(' ; ')==='Dominadas/4/8/12/reps/90 ; Remo con barra/4/8/8//90 ; Curl de bíceps con mancuernas/3/12/12//60 ; cardio:Cinta'
+      && leido.ej[2].join(' ; ')==='Sentadilla goblet/5/5/5//150 ; Plancha/3///seg/90', JSON.stringify(leido.ej));
+    ok('lector flexible: lo que no entiende lo devuelve, no lo inventa', leido.no.join('|')==='calentar bien antes' && await pl.evaluate(()=>{ const l = traducirRutinaLibre('hola esta es mi rutina\nhago 3 veces por semana'); return l.texto==='' && l.noLeidas.length===2; }));
+    ok('lector flexible: sin encabezado arma un solo día, y el formato de la app sigue igual', await pl.evaluate(r=>{ const p = parseRoutine(traducirRutinaLibre('Press banca 3x10\nSentadilla 3x10').texto); return p.days.length===1 && p.days[0].name==='Día 1' && p.days[0].exercises.length===2 && parseRoutine(r).days.length===5; }, RUTINA));
+    await pl.fill('#routinepaste', LIBRE);
+    await pl.click('button:has-text("Cargar rutina")');
+    ok('rutina propia: muestra qué entendió antes de guardar', await pl.isVisible('h2:has-text("Esto entendí")') && await pl.isVisible('.card:has-text("Miércoles: Espalda"):has-text("Dominadas")') && await pl.isVisible('.card:has-text("No pude leer este renglón"):has-text("calentar bien antes")') && await pl.evaluate(()=>!state.routine));
+    await pl.click('text=Volver');
+    ok('rutina propia: volver devuelve el texto para corregirlo', (await pl.inputValue('#routinepaste'))===LIBRE);
+    await pl.click('button:has-text("Cargar rutina")');
+    await pl.click('button:has-text("Está bien, seguir")');
+    if(await pl.isVisible('h2:has-text("Revisar rutina")')) await pl.click('button:has-text("Guardar")');
+    ok('rutina propia: queda cargada con sus tres días', await pl.evaluate(()=>state.routine && state.routine.days.length===3 && state.routine.days[1].exercises[3].cardio===true) && await pl.isVisible('h1:has-text("Lunes - Pecho y tríceps")'));
+    await pl.evaluate(()=>{ localStorage.clear(); }); await pl.reload(); await pl.waitForTimeout(300);
+    await pl.click('text=Seguir sin Google');
+    await pl.click('button:has-text("foto, en PDF")');
+    const convertir = await pl.evaluate(()=>navigator.clipboard.readText());
+    ok('rutina propia: mensaje para que una IA la convierta, con un ejemplo que la app lee', convertir.includes('MI RUTINA:') && await pl.evaluate(()=>{ const t = MENSAJE_CONVERTIR, p = parseRoutine(t.slice(t.indexOf('DIA 1:'), t.indexOf('Reglas:'))); return p.days.length===1 && p.days[0].exercises.length===3 && p.days[0].exercises[2].cardio && p.days[0].exercises[1].medida==='seg' && p.days[0].exercises.every(e=>BIBLIOTECA.some(x=>x.nombre===e.nombre)); }));
+    await pl.click('button:has-text("Armarla a mano")');
+    await pl.fill('input[aria-label="Buscar ejercicio"]', 'press banca');
+    await pl.locator('.item').first().click();
+    ok('armar a mano: crea la rutina con el día 1 y abre el editor', await pl.isVisible('text=DÍA 1') && await pl.isVisible('input[aria-label="Nombre del día"]') && await pl.evaluate(()=>state.routine.days.length===1 && state.routine.days[0].name==='Día 1' && state.routine.days[0].exercises.length===1 && currentTab==='rutina') && !(await pl.isVisible('button:has-text("Eliminar este día")')));
+    await pl.click('text=Volver');
+    for(const busca of ['remo con barra', 'sentadilla']){
+      await pl.click('button:has-text("Agregar día")');
+      await pl.fill('input[aria-label="Buscar ejercicio"]', busca);
+      await pl.locator('.item').first().click();
+      await pl.click('text=Volver');
+    }
+    ok('armar a mano: agregar días suma al final con nombre propio', await pl.evaluate(()=>state.routine.days.map(d=>d.name).join()==='Día 1,Día 2,Día 3'));
+    // rotación en la segunda vuelta, parada en el día 3: al borrar el día 1 sigue en ese mismo día y en la misma vuelta
+    await pl.evaluate(()=>{ state.slot = 5; state.routine.days[2].name = 'Piernas'; saveState(); abrirEditor('dia', 0); });
+    await pl.click('button:has-text("Eliminar este día")');
+    ok('eliminar un día: la rotación sigue en el mismo día y en la misma vuelta', await pl.evaluate(()=>state.routine.days.map(d=>d.name).join()==='Día 2,Piernas' && state.routine.days[todayDayIndex()].name==='Piernas' && Math.floor(state.slot / 2)===1 && editor===null));
+    await pl.click('button:has-text("Agregar día")');
+    await pl.fill('input[aria-label="Buscar ejercicio"]', 'curl de biceps');
+    await pl.locator('.item').first().click();
+    ok('agregar un día: no mueve el día que toca', await pl.evaluate(()=>state.routine.days.length===3 && state.routine.days[2].name==='Día 3' && state.routine.days[todayDayIndex()].name==='Piernas' && Math.floor(state.slot / 3)===1));
+    await pl.evaluate(()=>{ editor = null; setTab('inicio'); empezarSesion(todayDayIndex()); abrirEditor('dia', 0); currentTab = 'rutina'; render(); });
+    dl.length = 0;
+    await pl.click('button:has-text("Eliminar este día")');
+    ok('eliminar un día: no deja con una sesión en curso', dl.some(d=>d.includes('sesión en curso')) && await pl.evaluate(()=>state.routine.days.length===3));
+    ok('rutina propia: sin errores de JavaScript', !errL.length, errL.join(' | '));
+    await pl.close();
+  }
+
   // --- Google Drive: ingreso, carpeta "Entreno" y archivos del entrenador.
   // Google se reemplaza por uno de mentira (el ingreso y la API de Drive), así se prueba el código real que le habla.
   {

@@ -652,7 +652,14 @@ function gruposDeRevision(rutinas){ return rutinas.map(r=>({nombre: r.name, ejer
 function cargarRutina(){
   const txt = document.getElementById('routinepaste').value;
   const parsed = parseRoutine(txt);
-  if(!parsed.days.length){ alert(parsed.aparte.length ? 'Esto es una rutina aparte: cargala desde Rutina → Aparte.' : 'No se pudo leer la rutina. Revisá el formato.'); return; }
+  if(parsed.days.length) return guardarRutinaLeida(parsed, txt);
+  if(parsed.aparte.length){ alert('Esto es una rutina aparte: cargala desde Rutina → Aparte.'); return; }
+  const libre = traducirRutinaLibre(txt);
+  const leida = parseRoutine(libre.texto);
+  if(!leida.days.length){ alert('No pude leer la rutina. Escribí un ejercicio por renglón, por ejemplo "Press banca 3x10", o usá el botón de abajo para que una IA la convierta.'); return; }
+  abrirModal('entendido', ()=>screenEntendido(leida, libre.noLeidas, txt));
+}
+function guardarRutinaLeida(parsed, txt){
   revisarYGuardar({titulo: 'Revisar rutina', grupos: gruposDeRevision([...parsed.days, ...parsed.aparte]),
     texto: {id: 'routinepaste', valor: txt}, guardar: ()=>{
       const reemplazando = !!state.routine;
@@ -666,6 +673,108 @@ function cargarRutina(){
       if(reemplazando){ currentTab='inicio'; state.currentTab='inicio'; }
       render();
     }});
+}
+
+/* ---------- lector flexible: una rutina escrita "como la tengas" se pasa al formato de la app ---------- */
+// Entiende renglones como "Press banca 3x10", "Sentadilla 4 x 8-12", "3 series de 12 de curl" o "Cinta 20 min",
+// y encabezados como "Lunes", "Día 1 - Pecho" o "Piernas". Lo que no entiende lo devuelve aparte: no inventa nada.
+const VINETA = /^\s*(?:[-*•·▪➤>]+|\d{1,2}[.)])\s+/;
+const SEPARADOR_RANGO = '\\s*(?:-|–|a|\\/)\\s*';
+const UNIDAD_TIEMPO = '(seg(?:undos?)?|s\\b|"|min(?:utos?)?|\')';
+const SERIES_POR = new RegExp(`(\\d+)\\s*(?:x|×|\\*|por)\\s*(\\d+)(?:${SEPARADOR_RANGO}(\\d+))?\\s*${UNIDAD_TIEMPO}?`, 'i');
+const SERIES_DE = new RegExp(`(\\d+)\\s*(?:series?|sets?|vueltas?)\\b\\s*(?:de|x|por|:)?\\s*(?:(\\d+)(?:${SEPARADOR_RANGO}(\\d+))?\\s*${UNIDAD_TIEMPO}?)?`, 'i');
+const SERIES_AL_FALLO = /(\d+)\s*(?:x|×|\*|series?|sets?)\s*(?:de\s+|al\s+)?(?:fallo|m[aá]x(?:imo)?\b|amrap)/i;   // series sin repeticiones fijas
+const DESCANSO_LIBRE = new RegExp(`\\(?\\s*(?:descanso|desc|pausa|rest)\\.?\\s*:?\\s*(?:de\\s*)?(?:(\\d+):(\\d{2})|(\\d+(?:[.,]\\d+)?)\\s*${UNIDAD_TIEMPO}?)\\s*\\)?`, 'i');
+const DURACION = /(\d+(?:[.,]\d+)?)\s*(?:min(?:utos?)?|')/i;
+const PARECE_CARDIO = /cinta|bici|el[ií]ptic|trot|corr|camin|soga|escal|remo erg|nata|aer[oó]bic|cardio/i;
+const PALABRAS_DE_DIA = /^(?:d[ií]a|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|rutina|sesi[oó]n|entrenamiento)\b/i;
+const PALABRAS_DE_GRUPO = new Set('pecho espalda pierna piernas hombro hombros brazo brazos biceps triceps gluteo gluteos abdominales abdomen core cuadriceps isquios isquiotibiales femorales gemelos dorsales trapecio trapecios antebrazo antebrazos push pull legs leg upper lower torso empuje tiron superior inferior tren cuerpo completo full body cardio aerobico movilidad'.split(' '));
+const PALABRAS_DE_UNION = new Set(['y', 'e', 'o', 'de', 'del', 'con', 'mas', 'a', 'b', 'c', 'd']);
+function esMinutos(unidad){ return /^(?:min|')/i.test(unidad || ''); }
+function esEncabezadoLibre(linea){
+  if(SERIES_POR.test(linea) || SERIES_AL_FALLO.test(linea) || /\d+\s*(?:series?|sets?)\b/i.test(linea) || DURACION.test(linea)) return false;
+  if(/:$/.test(linea) || PALABRAS_DE_DIA.test(linea)) return true;
+  const palabras = normalizarNombre(linea).split(' ').filter(Boolean);
+  return palabras.some(p=>PALABRAS_DE_GRUPO.has(p)) && palabras.every(p=>PALABRAS_DE_GRUPO.has(p) || PALABRAS_DE_UNION.has(p) || /^\d+$/.test(p));
+}
+// un renglón de ejercicio en el formato de la app, o null si no se entiende
+function ejercicioLibre(linea){
+  let resto = linea, descanso = null;
+  const d = resto.match(DESCANSO_LIBRE);
+  if(d){
+    if(d[1]) descanso = parseInt(d[1], 10)*60 + parseInt(d[2], 10);
+    else { const n = parseFloat(d[3].replace(',', '.')); descanso = Math.round(esMinutos(d[4]) || (!d[4] && n <= 10) ? n*60 : n); }   // sin unidad, hasta 10 se toma como minutos
+    resto = resto.replace(d[0], ' ');
+  }
+  const m = resto.match(SERIES_AL_FALLO) || resto.match(SERIES_POR) || resto.match(SERIES_DE);
+  const duracion = !m && resto.match(DURACION);
+  if(m) resto = resto.replace(m[0], ' ');
+  if(duracion) resto = resto.replace(duracion[0], ' ');
+  const nombre = resto.replace(/\d+(?:[.,]\d+)?\s*kg\b/ig, ' ').replace(/\b(?:reps?|repeticiones)\b|\b(?:por|c\/|cada)\s*(?:lado|pierna|brazo)\b/ig, ' ').replace(/\(\s*\)/g, ' ').replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ').replace(/^[\s:;,.\-–]+|[\s:;,.\-–]+$/g, '');
+  if(!nombre) return null;
+  const x = buscarEjercicio(nombre);
+  if(x ? x.patron==='cardio' : (duracion && PARECE_CARDIO.test(nombre))) return `CARDIO: ${nombre}`;
+  if(!m) return x && !duracion ? nombre : null;   // sin series: solo si es un ejercicio que la app conoce
+  const partes = [nombre, `series ${parseInt(m[1], 10)}`];
+  if(m[4]) partes.push('medida seg');
+  else if(m[2]) partes.push(`reps ${m[2]}-${m[3] || m[2]}`);
+  if(descanso) partes.push(`descanso ${descanso}`);
+  return partes.join(' | ');
+}
+function traducirRutinaLibre(text){
+  const salida = [], noLeidas = [];
+  let dias = 0;
+  const abrirDia = nombre=>salida.push(`DIA ${++dias}: ${nombre}`);
+  lineasDe(text).forEach(cruda=>{
+    const linea = cruda.replace(VINETA, '').trim();
+    if(!linea) return;
+    if(esEncabezadoLibre(linea)){
+      const limpio = linea.replace(/:$/, '').trim();
+      const conNumero = limpio.match(/^d[ií]a\s*\d+\s*[:.\-–]?\s*(.+)$/i);
+      return abrirDia(conNumero ? conNumero[1] : limpio);
+    }
+    const e = ejercicioLibre(linea);
+    if(!e) return noLeidas.push(cruda);
+    if(!dias) abrirDia('Día 1');
+    salida.push(e);
+  });
+  return {texto: salida.join('\n'), noLeidas};
+}
+function devolverTextoPegado(texto){
+  const t = document.getElementById(texto.id);
+  if(t) t.value = texto.valor;
+}
+// antes de guardar una rutina leída con el lector flexible se muestra qué se entendió
+function screenEntendido(leida, noLeidas, txt){
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(()=>{ cerrarModal(); devolverTextoPegado({id: 'routinepaste', valor: txt}); }));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Esto entendí</h2>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">Fijate que estén todos los días y ejercicios. Lo que tu rutina no decía (descanso, repeticiones) lo completé con valores comunes: después lo cambiás desde Rutina.</p>`));
+  const lista = el(`<div class="pila"></div>`);
+  leida.days.forEach((d, i)=>{
+    const card = el(`<div class="card" style="padding:14px 16px"><p class="muted" style="font-size:12px;font-weight:600">DÍA ${i+1}</p><h2>${esc(d.name)}</h2></div>`);
+    card.appendChild(listaEjerciciosRutina(d.exercises));
+    lista.appendChild(card);
+  });
+  if(noLeidas.length){
+    const card = el(`<div class="card" style="padding:14px 16px;border-color:var(--warn)"><p style="font-weight:600;color:var(--warn);margin-bottom:4px">No pude leer ${noLeidas.length===1 ? 'este renglón' : 'estos renglones'}</p><p class="secondary" style="font-size:13px;margin-bottom:6px">No se cargan. Volvé y escribilos como "Press banca 3x10", o agregalos después a mano.</p></div>`);
+    noLeidas.forEach(l=>card.appendChild(el(`<p class="codigo" style="font-size:12px">${esc(l)}</p>`)));
+    lista.appendChild(card);
+  }
+  wrap.appendChild(lista);
+  wrap.appendChild(boton('Está bien, seguir', 'btn-primary btn-full', ()=>{ modal = null; guardarRutinaLeida(leida, txt); }));
+  wrap.lastChild.style.marginTop = '12px';
+  wrap.appendChild(botonConvertirConIA());
+  return wrap;
+}
+function botonConvertirConIA(){
+  const box = document.createElement('div');
+  const msg = el(`<div style="font-size:12px;color:var(--success);text-align:center"></div>`);
+  box.appendChild(boton('¿La tenés en foto, en PDF o no se lee bien? Copiá este mensaje y pedile a una IA que la convierta', 'btn-link btn-full', ()=>copiarTexto(MENSAJE_CONVERTIR, msg, 'Mensaje copiado: pegalo en tu IA con tu rutina o la foto')));
+  box.lastChild.style.cssText = 'height:auto;padding:10px 0;line-height:1.35;white-space:normal';
+  box.appendChild(msg);
+  return box;
 }
 
 /* ---------- medidas ---------- */
@@ -1507,17 +1616,19 @@ function dibujar(){
 function bloqueCargaRutina(textoBoton, onCargar){
   const box = document.createElement('div');
   box.appendChild(bloqueVerFormato(`
-    <p class="muted">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio: nombre + datos separados por <b> | </b>.</p>
+    <p class="muted">Podés pegarla como la tengas, un ejercicio por renglón (<b>Press banca 3x10</b>), con el nombre del día arriba de sus ejercicios. Este es el formato completo, el que usa tu entrenador:</p>
+    <p class="muted" style="margin-top:8px">Cada día empieza con <b>DIA N: nombre</b>. Cada ejercicio: nombre + datos separados por <b> | </b>.</p>
     <p class="codigo">DIA 1: [nombre del día]
 [Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]</p>
     <p class="muted" style="margin-top:8px"><b>descanso</b> en segundos · <b>calentamiento</b>/<b>aproximacion</b> = cantidad de series de ese tipo · <b>series</b> = series de trabajo · <b>reps</b> = rango · <b>alt</b> = sustitutos (opcional) · <b>medida</b> opcional: reps, seg, kg+reps, kg+seg, kg+m.</p>
     <p class="muted" style="margin-top:8px">Opcional, arriba de todo: <b>PLAN: Fuerza 3 | Potencia 3</b> (bloques y semanas). Circuitos: <b>CIRCUITO 3 vueltas | descanso 90</b>, los ejercicios, y <b>FIN CIRCUITO</b>. Cardio dentro de un día: <b>CARDIO: máquina</b>.</p>`));
-  box.appendChild(boton(`${icon('wand')} Armar tu entrenador con una IA`, 'btn-full', abrirKit));
-  box.lastChild.style.marginBottom = '10px';
-  box.appendChild(el(`<textarea id="routinepaste" aria-label="Rutina en texto" placeholder="DIA 1: Push
-[Ejercicio] | descanso 120 | calentamiento 1 | aproximacion 1 | series 3 | reps 8-12 | alt: [sustituto 1], [sustituto 2]"></textarea>`));
+  box.appendChild(el(`<textarea id="routinepaste" aria-label="Rutina en texto" placeholder="Lunes - Pecho
+Press banca 3x10
+Fondos 3 x 8-12
+Cinta 20 min"></textarea>`));
   box.appendChild(boton(textoBoton, 'btn-primary btn-full', onCargar));
   box.lastChild.style.marginTop = '12px';
+  box.appendChild(botonConvertirConIA());
   return box;
 }
 /* ---------- pantalla: bienvenida (la primera vez, antes de cargar una rutina) ---------- */
@@ -1544,8 +1655,13 @@ function screenBienvenida(){
 function screenSinRutina(){
   const wrap = document.createElement('div');
   wrap.appendChild(encabezado('Cargá tu rutina'));
-  wrap.appendChild(el(`<p class="secondary" style="margin-bottom:16px">Pegá tu rutina abajo, un renglón por ejercicio. Si no la tenés, armá tu entrenador con la IA que uses: te hace preguntas y te la devuelve en este formato.</p>`));
+  wrap.appendChild(el(`<p class="secondary" style="margin-bottom:16px">Si ya tenés una rutina, pegala abajo como la tengas, un ejercicio por renglón.</p>`));
   wrap.appendChild(bloqueCargaRutina('Cargar rutina', cargarRutina));
+  wrap.appendChild(etiqueta('Otras formas de empezar'));
+  const otras = el(`<div class="pila" style="gap:8px"></div>`);
+  otras.appendChild(boton(`${icon('plus')} Armarla a mano, eligiendo ejercicios`, 'btn-full', agregarDiaAMano));
+  otras.appendChild(boton(`${icon('wand')} Armar tu entrenador con una IA`, 'btn-full', abrirKit));
+  wrap.appendChild(otras);
   wrap.appendChild(el(`<p class="muted" style="font-size:13px;margin:24px 0 8px">¿Ya usabas la app y tenés una copia de seguridad?</p>`));
   wrap.appendChild(botonRestaurar());
   if(nubeDisponible()){
@@ -1750,8 +1866,10 @@ function screenRutina(){
     lista.appendChild(card);
   });
   wrap.appendChild(lista);
-  wrap.appendChild(boton(`${icon('upload')} Cargar rutina nueva completa`, 'btn-full', ()=>{ rutinaSub='nueva'; render(); }));
+  wrap.appendChild(boton(`${icon('plus')} Agregar día`, 'btn-dashed btn-full', agregarDiaAMano));
   wrap.lastChild.style.marginTop = '12px';
+  wrap.appendChild(boton(`${icon('upload')} Cargar rutina nueva completa`, 'btn-full', ()=>{ rutinaSub='nueva'; render(); }));
+  wrap.lastChild.style.marginTop = '8px';
   return wrap;
 }
 function screenRutinaNueva(){
@@ -1779,14 +1897,50 @@ function contenidoAparte(){
   box.appendChild(fila);
   return box;
 }
-// a mano: se elige el primer ejercicio y se sigue en el editor
-function nuevaAparteAMano(){
-  abrirModal('elegir', ()=>screenElegir({titulo: 'Primer ejercicio', subtitulo: 'Rutina aparte nueva', volver: cerrarModal, onElegir: x=>{
-    state.rutinasAparte.push({id: nuevoIdAparte(), name: nombreAparteNuevo(), exercises: [ejercicioNuevo(x)]});
+// a mano: se elige el primer ejercicio y se sigue en el editor. alCrear guarda la rutina nueva y devuelve [tipo, índice].
+function elegirPrimerEjercicio(subtitulo, alCrear){
+  abrirModal('elegir', ()=>screenElegir({titulo: 'Primer ejercicio', subtitulo, volver: cerrarModal, onElegir: x=>{
+    const [tipo, idx] = alCrear(ejercicioNuevo(x));
     modal = null;
     saveState();
-    abrirEditor('aparte', state.rutinasAparte.length-1);
+    abrirEditor(tipo, idx);
   }}));
+}
+function nuevaAparteAMano(){
+  elegirPrimerEjercicio('Rutina aparte nueva', e=>['aparte', state.rutinasAparte.push({id: nuevoIdAparte(), name: nombreAparteNuevo(), exercises: [e]}) - 1]);
+}
+function nombreDiaNuevo(){
+  const usados = new Set(state.routine.days.map(d=>d.name));
+  let n = state.routine.days.length + 1;
+  while(usados.has(`Día ${n}`)) n++;
+  return `Día ${n}`;
+}
+// Al cambiar la cantidad de días, la rotación sigue en el mismo día y en la misma vuelta.
+function reubicarRotacion(diasAntes, hoy){
+  const n = state.routine.days.length;
+  state.slot = Math.floor(state.slot / diasAntes) * n + hoy % n;
+}
+// suma un día al final de la rutina (o arma la rutina, si todavía no hay ninguna)
+function agregarDiaAMano(){
+  elegirPrimerEjercicio(state.routine ? 'Día nuevo' : 'Tu rutina, día 1', e=>{
+    if(!state.routine) state.routine = {days: []};
+    const antes = state.routine.days.length, hoy = antes ? todayDayIndex() : 0;
+    state.routine.days.push({name: nombreDiaNuevo(), exercises: [e]});
+    if(antes) reubicarRotacion(antes, hoy);
+    rutinaVista = 'dias'; rutinaSub = null;
+    currentTab = 'rutina'; state.currentTab = 'rutina';
+    return ['dia', antes];
+  });
+}
+function eliminarDia(idx){
+  const dias = state.routine.days, hoy = todayDayIndex();
+  if(state.activeSession && !state.activeSession.aparte){ alert('Tenés una sesión en curso. Finalizala antes de eliminar un día.'); return; }
+  if(!confirm(`¿Eliminar "${dias[idx].name}"? Las sesiones que ya hiciste quedan en el historial.`)) return;
+  dias.splice(idx, 1);
+  reubicarRotacion(dias.length + 1, hoy > idx ? hoy - 1 : hoy);
+  state.diaExpandido = null;
+  editor = null;
+  saveState(); render();
 }
 function screenAparteNueva(){
   const wrap = document.createElement('div');
@@ -3187,8 +3341,7 @@ function screenRevision(){
   wrap.appendChild(botonVolver(()=>{
     revision = null;
     cerrarModal();
-    const t = document.getElementById(r.texto.id);   // devuelve lo pegado para corregirlo
-    if(t) t.value = r.texto.valor;
+    devolverTextoPegado(r.texto);
   }));
   wrap.appendChild(el(`<h2 style="margin-bottom:6px">${esc(r.titulo)}</h2>`));
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">${pend.length ? `${pend.length} ejercicio${pend.length===1?'':'s'} para revisar. Los demás están en la biblioteca.` : 'Todo revisado.'}</p>`));
@@ -3417,6 +3570,7 @@ function screenEditor(){
     titulo: 'Agregar cardio', subtitulo: rut.name, patron: 'cardio', onElegir: x=>agregarAlEditor(x), volver: cerrarModal}))));
   wrap.lastChild.style.marginTop = '10px';
   wrap.appendChild(boton(`${icon('edit')} Editar como texto`, 'btn-ghost btn-full', ()=>{ editor.texto = true; render(); }));
+  if(!aparte && state.routine.days.length > 1) wrap.appendChild(boton(`${icon('trash')} Eliminar este día`, 'btn-ghost btn-full', ()=>eliminarDia(editor.idx)));
   if(aparte) wrap.appendChild(boton(`${icon('trash')} Eliminar esta rutina`, 'btn-ghost btn-full', ()=>{
     if(state.activeSession && state.activeSession.aparte===rut.id){ alert('Tenés una sesión de esta rutina en curso. Finalizala antes de eliminarla.'); return; }
     if(!confirm(`¿Eliminar "${rut.name}"? Las sesiones que ya hiciste quedan en el historial.`)) return;
