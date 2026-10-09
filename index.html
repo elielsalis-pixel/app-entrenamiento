@@ -134,6 +134,9 @@
   .campo{display:flex;flex-direction:column;gap:6px}
   .campo label{font-size:12px;color:var(--text-2)}
   .campo input,.campo select{height:48px;border-radius:12px;border:1px solid var(--border);background:var(--surface);font-size:17px;padding:0 12px;color:var(--text);width:100%;min-width:0}
+  .fila-correccion{display:grid;gap:6px;align-items:center;margin-bottom:6px}
+  .fila-correccion input,.fila-correccion select{height:44px;border-radius:10px;border:1px solid var(--border);background:var(--surface);font-size:16px;padding:0 8px;color:var(--text);width:100%;min-width:0}
+  .fila-correccion.cabecera{font-size:12px;color:var(--text-2);margin-bottom:4px}
   .opciones{display:flex;gap:8px}
   .opciones button{flex:1;min-width:0;padding:10px 6px;border-radius:12px;border:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;gap:2px;align-items:center}
   .opciones button b{font-size:14px}
@@ -1243,7 +1246,7 @@ function finalizarSesion(conToque){
   const clave = claveDeSesion(ses);
   const duracionSeg = Math.round((Date.now()-ses.inicio)/1000);
   state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
-  let volumenTotal = 0, prCount = 0;
+  let prCount = 0;
   const exercises = [];
   ses.exercises.forEach(e=>{
     if(e.cardio){
@@ -1253,14 +1256,8 @@ function finalizarSesion(conToque){
     if(e.pr) prCount++;
     const hechas = e.sets.filter(s=>s.done).map(s=>serieLimpia(s, e.medida));
     if(!hechas.length) return; // no hecho: no se registra ni cambia lo guardado para la próxima
-    if(esKgReps(e.medida)) hechas.forEach(s=>{ volumenTotal += s.peso*s.reps; });
-    state.lastSetsByDayExercise[clave + '::' + e.nombre] = hechas.map(({rpe, done, ...v})=>v);
-    if(esKgReps(e.medida)){
-      const normales = hechas.filter(s=>s.tipo==='Normal' && s.peso>0);
-      const ref = normales.length ? normales[normales.length-1] : hechas[hechas.length-1];
-      registrarCambioPeso(e.nombre, ref.peso, ref.reps, `Fin de sesión (${ses.dayName})`);
-      state.lastByExercise[e.nombre] = {peso: ref.peso, reps: ref.reps};
-    }
+    state.lastSetsByDayExercise[clave + '::' + e.nombre] = seriesParaRecordar(hechas);
+    if(esKgReps(e.medida)) recordarPeso(e.nombre, hechas, `Fin de sesión (${ses.dayName})`);
     // la medida se guarda solo si no es kg+reps (lo implícito)
     const registro = {nombre:e.nombre, sets:hechas};
     if(e.medida) registro.medida = e.medida;
@@ -1269,13 +1266,12 @@ function finalizarSesion(conToque){
     exercises.push(registro);
   });
 
-  const record = {fecha: new Date().toISOString(), dayName: ses.dayName, exercises, duracionSeg, volumenTotal, prCount, comparacion: null};
+  const record = {fecha: new Date().toISOString(), dayName: ses.dayName, exercises, duracionSeg, volumenTotal: 0, prCount, comparacion: null};
   if(ses.aparte) record.aparte = ses.aparte;
+  record.volumenTotal = volumenDe(record);
   const enBloque = bloqueDe(semanaActual());
   if(enBloque) record.bloque = enBloque.bloque.nombre;
-  const previa = sesionPrevia(record);
-  const prevVol = previa ? volumenDe(previa) : 0;
-  if(prevVol) record.comparacion = Math.round(((volumenTotal-prevVol)/prevVol)*100);
+  record.comparacion = comparacionConPrevia(record);
   listaDe(record).push(record);
   if(!ses.aparte) avanzarSlot();
   state.lastResumen = record;
@@ -1287,6 +1283,20 @@ function finalizarSesion(conToque){
 }
 
 function listaDe(r){ return r.aparte ? state.historyAparte : state.history; }
+// lo que se recuerda de un ejercicio para precargarlo la próxima vez (sin RPE ni marca de hecha)
+function seriesParaRecordar(sets){ return sets.map(({rpe, done, ...v})=>v); }
+// peso de referencia de un ejercicio kg+reps: la última serie normal con peso (o la última que haya)
+function recordarPeso(nombre, sets, origen){
+  const normales = sets.filter(s=>s.tipo==='Normal' && s.peso>0);
+  const ref = normales.length ? normales[normales.length-1] : sets[sets.length-1];
+  registrarCambioPeso(nombre, ref.peso, ref.reps, origen);
+  state.lastByExercise[nombre] = {peso: ref.peso, reps: ref.reps};
+}
+// % de volumen contra la sesión anterior del mismo día; null si no hay con qué comparar
+function comparacionConPrevia(r){
+  const previa = sesionPrevia(r), antes = previa ? volumenDe(previa) : 0;
+  return antes ? Math.round(((r.volumenTotal - antes)/antes)*100) : null;
+}
 // la sesión anterior de la misma rutina: el mismo día, la misma rutina aparte (aunque la hayas renombrado) o el mismo ejercicio suelto
 function sesionPrevia(r){
   const misma = h=>r.aparte ? h.aparte===r.aparte && (r.aparte!==SUELTO || h.dayName===r.dayName) : h.dayName===r.dayName;
@@ -3162,6 +3172,11 @@ function screenResumen(){
   }
   wrap.appendChild(boton('Volver al inicio', 'btn-primary btn-full', ()=>{ setSessionView('activa'); setTab('inicio'); }));
   wrap.lastChild.style.marginTop = '16px';
+  const lista = r.aparte ? 'historyAparte' : 'history', i = state[lista].findIndex(h=>h.fecha===r.fecha);
+  if(i >= 0){
+    wrap.appendChild(boton(`${icon('edit')} Corregir algo que anoté mal`, 'btn-ghost btn-full', ()=>abrirCorreccion(lista, i)));
+    wrap.lastChild.style.marginTop = '8px';
+  }
   return wrap;
 }
 
@@ -3349,7 +3364,8 @@ function screenDetalleSesion(){
   const wrap = document.createElement('div');
   wrap.appendChild(botonVolver(()=>{ histDetalle = null; render(); }));
   if(!h){ wrap.appendChild(el(`<p class="secondary">No se encontró la sesión.</p>`)); return wrap; }
-  wrap.appendChild(el(`<h1 style="margin-bottom:4px">${esc(h.dayName)}</h1>`));
+  wrap.appendChild(el(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px"><h1>${esc(h.dayName)}</h1></div>`));
+  wrap.lastChild.appendChild(boton(`${icon('edit')} Corregir`, 'btn-sm', ()=>abrirCorreccion(histDetalle.lista, histDetalle.i)));
   wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">${esc(new Date(h.fecha).toLocaleString('es-AR',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}))} · ${esc(resumenSesion(h))}</p>`));
   const lista = el(`<div class="pila"></div>`);
   h.exercises.forEach(e=>{
@@ -3362,6 +3378,97 @@ function screenDetalleSesion(){
   });
   wrap.appendChild(lista);
   return wrap;
+}
+
+/* ---------- corregir una sesión ya finalizada ---------- */
+// Se edita una copia; al guardar se reemplaza el registro y se recalcula lo que salía de él (lo que se precarga, récords, volumen).
+let correccion = null;   // {lista: 'history' | 'historyAparte', i, copia}
+function abrirCorreccion(lista, i){
+  correccion = {lista, i, copia: JSON.parse(JSON.stringify(state[lista][i]))};
+  abrirModal('corregir', screenCorregir);
+}
+function numeroEscrito(v){ const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) && n >= 0 ? n : 0; }
+function columnasCorreccion(e){ return `22px 112px repeat(${camposDe(e.medida).length},minmax(0,1fr)) 44px`; }
+function cabeceraCorreccion(e){
+  return el(`<div class="fila-correccion cabecera" style="grid-template-columns:${columnasCorreccion(e)}"><span></span><span>Tipo</span>${camposDe(e.medida).map(k=>`<span>${CAMPO_INFO[k].label}</span>`).join('')}<span></span></div>`);
+}
+function filaCorreccion(e, s, si, alBorrar){
+  const campos = camposDe(e.medida);
+  const fila = el(`<div class="fila-correccion" style="grid-template-columns:${columnasCorreccion(e)}"><span class="muted" style="font-size:13px;text-align:center">${si+1}</span></div>`);
+  const tipo = el(`<select aria-label="Tipo de la serie ${si+1}">${TIPOS.map(t=>`<option${t===(s.tipo||'Normal')?' selected':''}>${t}</option>`).join('')}</select>`);
+  tipo.onchange = ()=>{ s.tipo = tipo.value; };
+  fila.appendChild(tipo);
+  campos.forEach(k=>{
+    const input = el(`<input type="text" inputmode="decimal" aria-label="${CAMPO_INFO[k].label} de la serie ${si+1}" value="${esc(s[k]||0)}">`);
+    input.onfocus = ()=>input.select();
+    input.oninput = ()=>{ s[k] = numeroEscrito(input.value); };
+    fila.appendChild(input);
+  });
+  fila.appendChild(botonIcono('trash', `Borrar la serie ${si+1}`, alBorrar));
+  return fila;
+}
+function screenCorregir(){
+  const r = correccion.copia;
+  const wrap = document.createElement('div');
+  wrap.appendChild(botonVolver(cerrarModal));
+  wrap.appendChild(el(`<h2 style="margin-bottom:6px">Corregir: ${esc(r.dayName)}</h2>`));
+  wrap.appendChild(el(`<p class="secondary" style="font-size:13px;margin-bottom:12px">${esc(new Date(r.fecha).toLocaleString('es-AR',{weekday:'long',day:'numeric',month:'long'}))}. Lo que cambies acá también corrige lo que la app te precarga la próxima vez y tus récords.</p>`));
+  const lista = el(`<div class="pila"></div>`);
+  r.exercises.forEach(e=>{
+    const card = el(`<div class="card" style="padding:12px 14px"><p style="font-weight:600;margin-bottom:8px">${esc(e.cardio ? 'Cardio · '+e.nombre : e.nombre)}</p></div>`);
+    if(e.cardio) card.appendChild(camposCardio(e.cardioData));
+    else if(!e.sets.length) card.appendChild(el(`<p class="muted" style="font-size:13px">Sin series: al guardar, el ejercicio sale de esta sesión.</p>`));
+    else card.appendChild(cabeceraCorreccion(e));
+    if(!e.cardio) e.sets.forEach((s, si)=>card.appendChild(filaCorreccion(e, s, si, ()=>{ e.sets.splice(si, 1); render(); })));
+    lista.appendChild(card);
+  });
+  wrap.appendChild(lista);
+  wrap.appendChild(boton('Guardar corrección', 'btn-primary btn-full', guardarCorreccion));
+  wrap.lastChild.style.marginTop = '12px';
+  wrap.appendChild(boton('Cancelar', 'btn-ghost btn-full', cerrarModal));
+  return wrap;
+}
+// la sesión más reciente (de todo el historial) que tiene ese ejercicio con series
+function ultimaConEjercicio(nombre, condicion){
+  return todasLasSesiones().filter(h=>(!condicion || condicion(h)) && h.exercises.some(e=>e.nombre===nombre && !e.cardio && setsHechos(e).length))
+    .reduce((a, h)=>!a || h.fecha > a.fecha ? h : a, null);
+}
+// mejor peso x reps de un ejercicio en un conjunto de sesiones (0 si no hay)
+function mejorVolumen(nombre, sesiones){
+  return sesiones.reduce((m, h)=>h.exercises.filter(e=>e.nombre===nombre && !e.cardio && esKgReps(e.medida))
+    .reduce((m2, e)=>setsHechos(e).reduce((m3, s)=>Math.max(m3, (s.peso||0)*(s.reps||0)), m2), m), 0);
+}
+// lo que salía de la sesión corregida: precargas, peso de referencia, récords y su marca de récord
+function recalcularDerivados(r, nombres){
+  const clave = claveDeSesion(r), todas = todasLasSesiones();
+  state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
+  nombres.forEach(nombre=>{
+    const e = r.exercises.find(x=>x.nombre===nombre && !x.cardio);
+    const delMismoDia = ultimaConEjercicio(nombre, h=>claveDeSesion(h)===clave);
+    if(e && delMismoDia===r) state.lastSetsByDayExercise[clave + '::' + nombre] = seriesParaRecordar(setsHechos(e));
+    if(e && esKgReps(e.medida) && ultimaConEjercicio(nombre)===r) recordarPeso(nombre, setsHechos(e), `Corrección (${r.dayName})`);
+    if(esAsistido(nombre)) return;
+    const mejor = mejorVolumen(nombre, todas);
+    if(mejor) state.prByExercise[nombre] = mejor; else delete state.prByExercise[nombre];
+    if(!e || !esKgReps(e.medida)) return;
+    const antes = mejorVolumen(nombre, todas.filter(h=>h.fecha < r.fecha)), hoy = mejorVolumen(nombre, [r]);
+    const s = setsHechos(e).find(x=>(x.peso||0)*(x.reps||0)===hoy);
+    if(antes && hoy > antes) e.pr = {peso: s.peso, reps: s.reps, antes}; else delete e.pr;
+  });
+  r.prCount = r.exercises.filter(e=>e.pr).length;
+}
+function guardarCorreccion(){
+  const {lista, i, copia: r} = correccion;
+  const nombres = new Set([...state[lista][i].exercises, ...r.exercises].filter(e=>!e.cardio).map(e=>e.nombre));
+  r.exercises = r.exercises.filter(e=>e.cardio || e.sets.length);
+  r.volumenTotal = volumenDe(r);
+  r.comparacion = comparacionConPrevia(r);
+  state[lista][i] = r;
+  recalcularDerivados(r, nombres);
+  if(state.lastResumen && state.lastResumen.fecha===r.fecha) state.lastResumen = r;
+  correccion = null;
+  saveState(); cerrarModal();
+  sincronizarDrive(true);
 }
 
 /* ---------- biblioteca de ejercicios ---------- */

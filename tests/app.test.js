@@ -1151,6 +1151,41 @@ calentar bien antes`;
   ok('sin internet: la foto del ejercicio queda guardada', guardada);
   await ctx2.close();
 
+  // --- corregir una sesión ya finalizada
+  {
+    const ctxC = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
+    const pc = await ctxC.newPage(); const errC=[]; pc.on('pageerror', e=>errC.push(e.message)); pc.on('dialog', d=>d.accept());
+    await pc.goto(URL);
+    await pc.evaluate(r=>{ localStorage.setItem('entrenoState', JSON.stringify({routine: parseRoutine(r), history:[], historyAparte:[], rutinasAparte:[], lastByExercise:{}, lastSetsByDayExercise:{}, prByExercise:{}, slot:0, activeSession:null, bienvenidaVista:true, ultimaCopia:new Date().toISOString()})); }, RUTINA);
+    await pc.reload(); await pc.waitForTimeout(300);
+    // dos vueltas del Día 1: la primera con 60 kg y la segunda anotada mal con 600 kg en una serie
+    await pc.evaluate(()=>{
+      const sesion = (peso, mal)=>{ empezarSesion(0); state.activeSession.exercises.forEach(e=>e.sets.forEach((s, i)=>{ s.peso = peso; s.reps = 10; s.done = true; registrarSetDone(e, s); })); if(mal) { const s = state.activeSession.exercises[0].sets[4]; s.peso = 600; registrarSetDone(state.activeSession.exercises[0], s); } finalizarSesion(true); cerrarCierre(); };
+      sesion(60, false); state.slot = 0; sesion(62.5, true); state.slot = 0; saveState(); render();
+    });
+    ok('corregir: el error se arrastra antes de corregir (precarga, peso y récord)', await pc.evaluate(()=>state.lastSetsByDayExercise['Push::Press banca plano'][4].peso===600 && state.lastByExercise['Press banca plano'].peso===600 && state.prByExercise['Press banca plano']===6000 && state.history[1].exercises[0].pr && state.history[1].prCount===1));
+    ok('corregir: el resumen de la sesión ofrece corregir', await pc.isVisible('button:has-text("Corregir algo que anoté mal")'));
+    await pc.click('button:has-text("Corregir algo que anoté mal")');
+    ok('corregir: muestra cada serie con su tipo y sus datos', await pc.isVisible('h2:has-text("Corregir: Push")') && await pc.locator('.fila-correccion:not(.cabecera)').count()===8 && await pc.inputValue('[aria-label="Kg de la serie 5"] >> nth=0')==='600');
+    await pc.fill('[aria-label="Kg de la serie 5"] >> nth=0', '62,5');
+    await pc.click('[aria-label="Borrar la serie 3"] >> nth=1');
+    ok('corregir: borrar una serie la saca de la lista', await pc.locator('.fila-correccion:not(.cabecera)').count()===7);
+    await pc.selectOption('[aria-label="Tipo de la serie 5"] >> nth=0', 'Fallo');
+    await pc.click('button:has-text("Guardar corrección")'); await pc.waitForTimeout(200);
+    ok('corregir: guarda la sesión corregida', await pc.evaluate(()=>{ const h = state.history[1], e = h.exercises[0]; return e.sets[4].peso===62.5 && e.sets[4].tipo==='Fallo' && h.exercises[1].sets.length===2 && state.history.length===2 && modal===null; }));
+    ok('corregir: recalcula volumen, comparación y la marca de récord (62,5 kg sí supera a 60)', await pc.evaluate(()=>{ const h = state.history[1]; return h.volumenTotal===volumenDe(h) && h.volumenTotal===62.5*10*7 && h.comparacion===comparacionConPrevia(h) && h.exercises[0].pr.peso===62.5 && h.exercises[0].pr.antes===600 && h.prCount===1 && state.lastResumen.volumenTotal===h.volumenTotal; }));
+    ok('corregir: lo que se precarga la próxima vez sale de lo corregido', await pc.evaluate(()=>state.lastSetsByDayExercise['Push::Press banca plano'][4].peso===62.5 && state.lastSetsByDayExercise['Push::Press banca plano'][4].tipo==='Fallo' && state.lastByExercise['Press banca plano'].peso===62.5 && state.lastSetsByDayExercise['Push::Fondo de máquina asistido'].length===2));
+    ok('corregir: el récord vuelve al mejor real del historial', await pc.evaluate(()=>state.prByExercise['Press banca plano']===625));
+    // corregir una sesión vieja no pisa lo que dejó la más nueva
+    await pc.evaluate(()=>{ histVista = 'sesiones'; histDetalle = {lista: 'history', i: 0}; setTab('historial'); histDetalle = {lista: 'history', i: 0}; render(); });
+    await pc.click('button:has-text("Corregir")');
+    await pc.fill('[aria-label="Kg de la serie 3"] >> nth=0', '70');
+    await pc.click('button:has-text("Guardar corrección")'); await pc.waitForTimeout(200);
+    ok('corregir: desde el historial, una sesión vieja se corrige sin pisar la precarga de la más nueva', await pc.evaluate(()=>state.history[0].exercises[0].sets[2].peso===70 && state.lastSetsByDayExercise['Push::Press banca plano'][2].peso===62.5 && state.lastByExercise['Press banca plano'].peso===62.5 && state.prByExercise['Press banca plano']===700) && await pc.isVisible('text=70kg x 10 reps'));
+    ok('corregir: sin errores de JavaScript', !errC.length, errC.join(' | '));
+    await ctxC.close();
+  }
+
   // --- rutinas armadas: catálogo, elección, plan por bloques y rutinas aparte sugeridas
   {
     const ctxB = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
