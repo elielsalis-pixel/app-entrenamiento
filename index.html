@@ -1018,12 +1018,12 @@ function seedSets(e, clave){
     const arr = porTipo[tipo];
     if(arr.length) return nuevaSerie(e, tipo, arr[Math.min(i, arr.length-1)], i < arr.length ? fmtCorto(arr[i], e.medida) : null); // las extra copian la última conocida
     const v = {...base, reps: guardadas.length ? repsDef : base.reps};
-    if(v.peso && pct!==1) v.peso = Math.round(v.peso*pct);
+    if(v.peso && pct!==1) v.peso = pesoDePrevia(e.nombre, v.peso, tipo);
     return nuevaSerie(e, tipo, v);
   });
   const sets = [
-    ...armar('Calentamiento', e.calentamiento||0, 0.5),
-    ...armar('Aproximación', e.aproximacion||0, 0.75),
+    ...armar('Calentamiento', e.calentamiento||0, PORCENTAJE_PREVIA.Calentamiento),
+    ...armar('Aproximación', e.aproximacion||0, PORCENTAJE_PREVIA['Aproximación']),
     ...armar('Normal', e.series===undefined ? 3 : e.series, 1)
   ];
   if(!sets.length) sets.push(nuevaSerie(e, 'Normal', base));
@@ -1031,6 +1031,7 @@ function seedSets(e, clave){
   if(e.repsMax && esKgReps(e.medida) && porTipo.Normal.length && porTipo.Normal.every(s=>(s.reps||0) >= e.repsMax)){
     const paso = pasoDe(e.nombre);
     sets.filter(s=>s.tipo==='Normal').forEach(s=>{ s.peso = Math.round((s.peso + paso)*100)/100; s.sugerido = paso; });
+    ajustarPrevias({nombre: e.nombre, sets});
   }
   return sets;
 }
@@ -1144,6 +1145,23 @@ function esAsistido(nombre){ return /asistid/.test(normalizarNombre(nombre)); }
 // Récord personal: la mejor serie del ejercicio medida en peso × reps.
 // La primera vez que se hace un ejercicio queda como referencia, no como récord: no hay marca anterior que batir.
 // En los asistidos más kilos es más ayuda, así que no se cuentan.
+// Calentamiento y aproximación siguen al peso de la primera serie efectiva: 50% y 75%, redondeado al paso del equipo.
+const PORCENTAJE_PREVIA = {Calentamiento: 0.5, 'Aproximación': 0.75};
+function pesoDePrevia(nombre, base, tipo){
+  const paso = pasoDe(nombre);
+  return Math.round(base * PORCENTAJE_PREVIA[tipo] / paso) * paso;
+}
+// forzar: también las que se cambiaron a mano. Las ya hechas no se tocan.
+function ajustarPrevias(ej, forzar){
+  const base = ej.sets.find(s=>s.tipo==='Normal' && s.peso>0);
+  if(!base) return false;
+  ej.sets.forEach(s=>{
+    if(!(s.tipo in PORCENTAJE_PREVIA) || s.done || (s.aMano && !forzar)) return;
+    s.peso = pesoDePrevia(ej.nombre, base.peso, s.tipo);
+    if(forzar) delete s.aMano;
+  });
+  return true;
+}
 function registrarSetDone(ej, s){
   if(!esKgReps(ej.medida) || esAsistido(ej.nombre)) return;
   const vol = s.peso * s.reps;
@@ -2891,10 +2909,15 @@ function stepperCell(ej, s, campo){
   const menos = el(`<button aria-label="Restar ${info.label}">−</button>`);
   const input = el(`<input type="text" inputmode="${info.decimal?'decimal':'numeric'}" aria-label="${info.label}" value="${esc(s[campo])}">`);
   const mas = el(`<button aria-label="Sumar ${info.label}">+</button>`);
+  const cambio = ()=>{
+    if(campo==='peso' && s.tipo in PORCENTAJE_PREVIA) s.aMano = true;
+    if(campo==='peso' && s===ej.sets.find(x=>x.tipo==='Normal')) ajustarPrevias(ej);
+    saveState();
+  };
   input.onfocus = ()=>input.select();
-  input.oninput = ()=>{ s[campo] = info.decimal ? (parseFloat(input.value.replace(',','.'))||0) : (parseInt(input.value,10)||0); saveState(); };
-  menos.onclick = ()=>{ s[campo] = Math.max(0, (s[campo]||0) - info.step); input.value = s[campo]; saveState(); };
-  mas.onclick = ()=>{ s[campo] = (s[campo]||0) + info.step; input.value = s[campo]; saveState(); };
+  input.oninput = ()=>{ s[campo] = info.decimal ? (parseFloat(input.value.replace(',','.'))||0) : (parseInt(input.value,10)||0); cambio(); };
+  menos.onclick = ()=>{ s[campo] = Math.max(0, (s[campo]||0) - info.step); input.value = s[campo]; cambio(); };
+  mas.onclick = ()=>{ s[campo] = (s[campo]||0) + info.step; input.value = s[campo]; cambio(); };
   fila.appendChild(menos); fila.appendChild(input); fila.appendChild(mas);
   return box;
 }
@@ -2964,15 +2987,10 @@ function screenMas(){
   if(ej.sets.some(s=>s.tipo==='Calentamiento' || s.tipo==='Aproximación')){
     wrap.appendChild(el('<div style="height:8px"></div>'));
     wrap.appendChild(boton('Recalcular calentamiento/aproximación según peso de hoy', 'btn-full', ()=>{
-      const normales = ej.sets.filter(s=>s.tipo==='Normal' && s.peso>0);
-      if(!normales.length){ alert('Cargá primero el peso de al menos una serie Normal.'); return; }
-      const base = normales[0].peso;
-      ej.sets.forEach(s=>{
-        if(s.tipo==='Calentamiento') s.peso = Math.round(base*0.5);
-        if(s.tipo==='Aproximación') s.peso = Math.round(base*0.75);
-      });
+      if(!ajustarPrevias(ej, true)){ alert('Cargá primero el peso de al menos una serie Normal.'); return; }
       saveState(); setSessionView('activa'); render();
     }));
+    wrap.appendChild(el(`<p class="muted" style="font-size:12px;margin-top:6px">Se ajustan solas al cambiar el peso de la primera serie efectiva, salvo las que cambiaste a mano. Este botón recalcula todas las que no hiciste todavía.</p>`));
   }
   wrap.appendChild(etiqueta('Descanso de este ejercicio'));
   const fila = el(`<div class="fila2"><div class="campo"><label for="editmin">Minutos</label><input id="editmin" type="text" inputmode="numeric" value="${Math.floor(ej.descanso/60)}"></div><div class="campo"><label for="editsec">Segundos</label><input id="editsec" type="text" inputmode="numeric" value="${ej.descanso%60}"></div></div>`);

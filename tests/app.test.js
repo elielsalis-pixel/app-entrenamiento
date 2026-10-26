@@ -134,13 +134,21 @@ Caminata del granjero | series 2 | medida kg+m | descanso 90`;
   await tocar('button[aria-label="Sumar Kg"]');
   await tocar('button[aria-label="Restar Reps"]');
   ok('sesión: stepper peso +2.5 y reps -1', await ev(()=>{ const s=state.activeSession.exercises[0].sets[2]; return s.peso===62.5 && s.reps===9; }));
+  ok('sesión: al cambiar el peso de la primera serie efectiva, calentamiento y aproximación lo siguen (50% y 75%, al paso de la barra)', await ev(()=>{ const s=state.activeSession.exercises[0].sets; return s[0].peso===32.5 && s[1].peso===47.5 && s[3].peso===60; }));
+  await ev(()=>{ const ej=state.activeSession.exercises[0]; ej.activa=0; saveState(); render(); });
+  await tocar('button[aria-label="Restar Kg"]');
+  await ev(()=>{ const ej=state.activeSession.exercises[0]; ej.activa=2; saveState(); render(); });
+  await tocar('button[aria-label="Sumar Kg"]');
+  ok('sesión: un calentamiento cambiado a mano no se pisa al cambiar la efectiva', await ev(()=>{ const s=state.activeSession.exercises[0].sets; return s[2].peso===65 && s[0].peso===30 && s[0].aMano && s[1].peso===50; }));
+  await tocar('button[aria-label="Restar Kg"]');
   for(let i=0;i<3;i++) await tocar('.serie-activa button[aria-label^="Tipo de serie"]');
   ok('sesión: cambiar tipo de serie', await ev(()=>state.activeSession.exercises[0].sets[2].tipo==='Fallo'));
   await tocar('.serie-activa button[aria-label^="Tipo de serie"]');
   // Más: recalcular
   await tocar('button:has-text("Más")');
+  ok('sesión: Más explica que calentamiento y aproximación se ajustan solos', await visible('Se ajustan solas al cambiar el peso de la primera serie efectiva'));
   await tocar('text=Recalcular calentamiento/aproximación según peso de hoy');
-  ok('sesión: recalcular cal/apx', await ev(()=>{ const s=state.activeSession.exercises[0].sets; return s[0].peso===31 && s[1].peso===47; }));
+  ok('sesión: el botón recalcula todas, también las cambiadas a mano', await ev(()=>{ const s=state.activeSession.exercises[0].sets; return s[0].peso===32.5 && s[1].peso===47.5 && !s[0].aMano; }));
   // marcar la serie 3 como hecha (sigue activa al volver de Más)
   ok('sesión: la serie activa se mantiene al volver de Más', await page.isVisible('.serie-activa:has-text("Serie 3")'));
   await tocar('.serie-activa button:has-text("Hecha")');
@@ -1182,6 +1190,7 @@ calentar bien antes`;
     await pc.fill('[aria-label="Kg de la serie 3"] >> nth=0', '70');
     await pc.click('button:has-text("Guardar corrección")'); await pc.waitForTimeout(200);
     ok('corregir: desde el historial, una sesión vieja se corrige sin pisar la precarga de la más nueva', await pc.evaluate(()=>state.history[0].exercises[0].sets[2].peso===70 && state.lastSetsByDayExercise['Push::Press banca plano'][2].peso===62.5 && state.lastByExercise['Press banca plano'].peso===62.5 && state.prByExercise['Press banca plano']===700) && await pc.isVisible('text=70kg x 10 reps'));
+    ok('sesión: si la app sugiere subir el peso, calentamiento y aproximación siguen al peso sugerido', await pc.evaluate(()=>{ const e={nombre:'Press banca plano con barra', calentamiento:1, aproximacion:1, series:2, repsMin:8, repsMax:10}; state.lastSetsByDayExercise['X::'+e.nombre]=[{tipo:'Calentamiento',peso:20,reps:10},{tipo:'Aproximación',peso:40,reps:5},{tipo:'Normal',peso:60,reps:10},{tipo:'Normal',peso:60,reps:10}]; const s=seedSets(e,'X'); delete state.lastSetsByDayExercise['X::'+e.nombre]; return s.map(x=>x.peso).join()==='32.5,47.5,62.5,62.5'; }));
     ok('corregir: sin errores de JavaScript', !errC.length, errC.join(' | '));
     await ctxC.close();
   }
