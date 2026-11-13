@@ -532,13 +532,14 @@ function aplicarAjustes(texto){
     }
     const actual = state.lastByExercise[nombreReal] || {reps: 10};
     registrarCambioPeso(nombreReal, peso, actual.reps, 'Ajuste sugerido (bloque AJUSTE)');
-    state.lastByExercise[nombreReal] = {peso, reps: actual.reps};
-    // actualizar también las series guardadas por día para este ejercicio (todas las series "Normal")
+    // El peso queda marcado como puesto por el entrenador: la próxima sesión lo precarga tal cual, con las reps del rango
+    // de la rutina vigente (las guardadas pueden ser de otro bloque) y con calentamiento y aproximación sobre el peso nuevo.
+    state.lastByExercise[nombreReal] = {peso, reps: actual.reps, ajustado: true};
     state.lastSetsByDayExercise = state.lastSetsByDayExercise || {};
     Object.keys(state.lastSetsByDayExercise).forEach(key=>{
       if(key.endsWith('::'+nombreReal)){
-        state.lastSetsByDayExercise[key] = state.lastSetsByDayExercise[key].map(s=>
-          s.tipo==='Normal' ? {...s, peso} : s
+        state.lastSetsByDayExercise[key] = state.lastSetsByDayExercise[key].filter(s=>!(s.tipo in PORCENTAJE_PREVIA)).map(s=>
+          ({...s, peso, ajustado: true})
         );
       }
     });
@@ -1013,9 +1014,13 @@ function seedSets(e, clave){
   const porTipo = {Calentamiento:[], 'Aproximación':[], Normal:[]};
   guardadas.forEach(s=>{ (porTipo[s.tipo] || porTipo.Normal).push(s); });
   const general = !guardadas.length && esKgReps(e.medida) ? state.lastByExercise[e.nombre] : null;
-  const base = porTipo.Normal[0] || (general ? {peso: general.peso, reps: general.reps} : {peso:0, reps: repsDef});
+  // peso puesto por el entrenador (AJUSTE) y todavía sin entrenar: reps del rango actual, sin "anterior" y sin progresión
+  const ajustado = porTipo.Normal.some(s=>s.ajustado) || !!(general && general.ajustado);
+  const repsAjuste = r=>ajustado && repsDef ? repsDef : r;
+  const base = porTipo.Normal[0] || (general ? {peso: general.peso, reps: repsAjuste(general.reps)} : {peso:0, reps: repsDef});
   const armar = (tipo, n, pct)=>Array.from({length:n}, (_,i)=>{
     const arr = porTipo[tipo];
+    if(arr.length && ajustado) return nuevaSerie(e, tipo, {...arr[Math.min(i, arr.length-1)], reps: repsAjuste(arr[Math.min(i, arr.length-1)].reps)});
     if(arr.length) return nuevaSerie(e, tipo, arr[Math.min(i, arr.length-1)], i < arr.length ? fmtCorto(arr[i], e.medida) : null); // las extra copian la última conocida
     const v = {...base, reps: guardadas.length ? repsDef : base.reps};
     if(v.peso && pct!==1) v.peso = pesoDePrevia(e.nombre, v.peso, tipo);
@@ -1028,7 +1033,7 @@ function seedSets(e, clave){
   ];
   if(!sets.length) sets.push(nuevaSerie(e, 'Normal', base));
   // progresión sugerida: si la vez pasada llegaste al tope de reps en todas, precarga el peso siguiente
-  if(e.repsMax && esKgReps(e.medida) && porTipo.Normal.length && porTipo.Normal.every(s=>(s.reps||0) >= e.repsMax)){
+  if(!ajustado && e.repsMax && esKgReps(e.medida) && porTipo.Normal.length && porTipo.Normal.every(s=>(s.reps||0) >= e.repsMax)){
     const paso = pasoDe(e.nombre);
     sets.filter(s=>s.tipo==='Normal').forEach(s=>{ s.peso = Math.round((s.peso + paso)*100)/100; s.sugerido = paso; });
     ajustarPrevias({nombre: e.nombre, sets});

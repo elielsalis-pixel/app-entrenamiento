@@ -1195,6 +1195,37 @@ calentar bien antes`;
     await ctxC.close();
   }
 
+  // --- cambio de bloque con AJUSTE: el peso del entrenador se precarga tal cual
+  {
+    const ctxA = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
+    const pa = await ctxA.newPage(); const errA=[]; pa.on('pageerror', e=>errA.push(e.message)); pa.on('dialog', d=>d.accept());
+    await pa.goto(URL);
+    const HIPER = 'DIA 1: Torso 1\nPress banca con mancuernas | descanso 90 | calentamiento 1 | aproximacion 0 | series 3 | reps 8-10';
+    await pa.evaluate(r=>{ localStorage.setItem('entrenoState', JSON.stringify({routine: parseRoutine(r), history:[], historyAparte:[], rutinasAparte:[], lastByExercise:{}, lastSetsByDayExercise:{}, prByExercise:{}, slot:0, activeSession:null, bienvenidaVista:true, ultimaCopia:new Date().toISOString()})); }, HIPER);
+    await pa.reload(); await pa.waitForTimeout(300);
+    // última sesión de hipertrofia: 20 kg x 10 en todas (tope del rango viejo) y calentamiento con 10 kg
+    await pa.evaluate(()=>{ empezarSesion(0); const e = state.activeSession.exercises[0]; e.sets.forEach(s=>{ s.peso = s.tipo==='Normal' ? 20 : 10; s.reps = 10; s.done = true; }); finalizarSesion(true); cerrarCierre(); });
+    // rutina de fuerza (mismo día, otro rango, más previas) y otro día nuevo con el mismo ejercicio
+    const FUERZA = 'DIA 1: Torso 1\nPress banca con mancuernas | descanso 180 | calentamiento 1 | aproximacion 1 | series 3 | reps 5-7\n\nDIA 2: Torso 2\nPress banca con mancuernas | descanso 180 | calentamiento 1 | aproximacion 1 | series 3 | reps 5-7';
+    await pa.evaluate(r=>{ guardarRutinaLeida(parseRoutine(r), r); }, FUERZA);
+    await pa.evaluate(()=>{ setTab('ajustes'); ajustesVista = 'ajuste'; render(); });
+    await pa.fill('#ajustesPaste', 'AJUSTE: Press banca con mancuernas | peso 22.5');
+    await pa.click('text=Aplicar ajustes');
+    const precarga = d=>pa.evaluate(d=>{ const e = state.routine.days[d].exercises[0]; return seedSets(e, state.routine.days[d].name).map(s=>({t: s.tipo[0], p: s.peso, r: s.reps, sug: !!s.sugerido, ant: s.anterior})); }, d);
+    const d1 = await precarga(0), paso = await pa.evaluate(()=>[pesoDePrevia('Press banca con mancuernas', 22.5, 'Calentamiento'), pesoDePrevia('Press banca con mancuernas', 22.5, 'Aproximación')]);
+    ok('ajuste: con el AJUSTE no suma el salto de progresión aunque las reps viejas superen el rango nuevo', d1.filter(s=>s.t==='N').every(s=>s.p===22.5 && !s.sug), JSON.stringify(d1));
+    ok('ajuste: precarga las reps del medio del rango nuevo, no las del bloque anterior', d1.filter(s=>s.t==='N').every(s=>s.r===6 && s.ant===null));
+    ok('ajuste: calentamiento y aproximación salen del peso nuevo, no de los pesos viejos', d1[0].t==='C' && d1[0].p===paso[0] && d1[1].t==='A' && d1[1].p===paso[1] && d1.length===5);
+    const d2 = await precarga(1);
+    ok('ajuste: en un día nuevo con el mismo ejercicio también precarga el peso del AJUSTE con las reps del rango', d2.filter(s=>s.t==='N').every(s=>s.p===22.5 && s.r===6 && !s.sug) && d2[0].p===paso[0]);
+    // después de entrenarlo vuelve a funcionar como siempre: con 7 reps en todas sugiere subir
+    await pa.evaluate(()=>{ state.slot = 0; empezarSesion(0); const e = state.activeSession.exercises[0]; e.sets.forEach(s=>{ s.reps = 7; s.done = true; }); finalizarSesion(true); cerrarCierre(); });
+    const d3 = await precarga(0);
+    ok('ajuste: una vez entrenado, la progresión vuelve a funcionar normal', d3.filter(s=>s.t==='N').every(s=>s.p>22.5 && s.sug && s.ant) && await pa.evaluate(()=>!state.lastByExercise['Press banca con mancuernas'].ajustado && !Object.values(state.lastSetsByDayExercise).flat().some(s=>s.ajustado)));
+    ok('ajuste: sin errores de JavaScript', !errA.length, errA.join(' | '));
+    await ctxA.close();
+  }
+
   // --- rutinas armadas: catálogo, elección, plan por bloques y rutinas aparte sugeridas
   {
     const ctxB = await browser.newContext({viewport:{width:390,height:844}, timezoneId:'America/Argentina/Buenos_Aires'});
