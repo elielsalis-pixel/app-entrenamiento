@@ -42,7 +42,7 @@ QUÉ TIENE HOY
   - Una copia en Drive que no subió este celular no se pisa: aviso y pantalla "Copias en Google Drive". Una app vacía no sube copia. Al restaurar, la app abre en Inicio.
 - INGRESO CON PERMISO DURADERO (hecho el 07/10):
   - La ventana de Google aparece solo la primera vez en cada celular (o si Google da de baja el permiso). Después el acceso se renueva solo.
-  - CONFIRMADO por Eliel el 18/11 en su celular: Drive funciona y no aparece la ventana de Google.
+  - CONFIRMADO por Eliel el 18/11 en su celular: Drive funciona y la ventana de Google no aparece nunca (siempre sin ventana).
   - Intermediario: Cloudflare Worker "entreno-acceso" en la cuenta de Eliel (la dirección está en DRIVE_INTERMEDIARIO de index.html). Sin estado: recibe {code} o {refresh_token}, agrega la clave secreta y le pregunta a Google; no guarda nada. Solo atiende pedidos con origen https://elielsalis-pixel.github.io. La clave secreta está cargada como secreto del Worker (GOOGLE_CLIENT_SECRET) y nunca estuvo en el repo.
   - Para cambiar el Worker: editar herramientas/intermediario/worker.mjs, correr las pruebas y pegarlo en Cloudflare > entreno-acceso > Edit code > Deploy. No hay conector de Cloudflare que despliegue (el que había solo lee y figura obsoleto).
   - En la app: DRIVE_INTERMEDIARIO, pedirAlIntermediario(), adaptador con accesoSinVentana(), pedirAcceso(conVentana) y soltarPermiso(). El permiso duradero se guarda en localStorage 'entrenoDrive'.permiso (no viaja en las copias). "Desconectar de este celular" lo da de baja en Google.
@@ -88,7 +88,7 @@ DECISIONES DE ELIEL (con el porqué)
 - Rutinas archivadas en Drive: sin tope.
 - Semanas del plan: dejar como está, sin aclararlo en el kit del entrenador (25/10: "dejalo así").
 - Corregir una sesión ya finalizada, en vez de reabrirla (09/10).
-- 2026-11-18: Drive funciona en su celular sin ventana de Google.
+- 2026-11-18: Drive funciona en su celular siempre sin ventana de Google.
 
 VENCIMIENTOS
 - Ninguno verificado. La pantalla de consentimiento de Google está "En producción" (sin vencimiento conocido).
