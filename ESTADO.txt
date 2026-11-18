@@ -1,0 +1,111 @@
+ESTADO: ENTRENO (actualizado 2026-11-18)
+Para retomar en un chat nuevo sin releer la conversación anterior.
+Texto plano, en español. Este repo es PUBLICO: aquí nunca van claves, datos personales ni nada del banco.
+Contrastado con el repo el 2026-11-18 (último commit 0ebfb2f del 13/11; 343 pruebas de la app + 12 del intermediario, todas pasan).
+
+DÓNDE ESTÁ
+- Repo: elielsalis-pixel/app-entrenamiento (público).
+- Rama publicada: main. Rama de trabajo: biblioteca-en-pruebas. Las dos iguales en 0ebfb2f al 18/11 (antes de este archivo).
+- Hosting y URL: GitHub Pages desde main, https://elielsalis-pixel.github.io/app-entrenamiento/ (sirve el sw.js entreno-v12, igual que main).
+- Archivos principales:
+  - index.html: toda la app.
+  - entrenador.js: textos del kit del entrenador (PROMPT_ENTRENADOR, REGLAS_ENTRENADOR, GUIAS_IA, MENSAJE_INICIO, MENSAJE_INFORME, MENSAJE_CONVERTIR).
+  - rutinas.js: catálogo de rutinas armadas.
+  - biblioteca.js: biblioteca de ejercicios, GENERADO, no editar a mano (herramientas/biblioteca/).
+  - sw.js: service worker; hay que subir el número de CACHE cuando cambian los archivos de la lista FILES.
+  - ejercicios/: fotos e ilustraciones. CREDITOS.md: atribuciones (mantenerlo al compartir la app).
+  - herramientas/intermediario/worker.mjs: código del Worker de Cloudflare.
+  - tests/app.test.js (343 pruebas), tests/intermediario.test.mjs (12), tests/verificar.sh (corre todo).
+- Todo el código sigue la skill desarrollo-limpio. Plan primero, esperar aprobación, no inventar datos.
+
+QUÉ TIENE HOY
+- Biblioteca de 433 ejercicios con fotos; Cambiar ejercicio con sugerencias; ejercicios propios y "no hay en mi gimnasio".
+- Rutina: revisión contra la biblioteca al pegar, editor visual por día, circuitos, plan por bloques (PLAN:), cardio en cualquier día (CARDIO: máquina).
+- SEMANAS DEL PLAN: se cuentan por vueltas completas de la rutina (cada día hecho o saltado con "Saltar este día"), NO por semana de calendario. Un parate no avanza el plan. Se corrige a mano en Rutina > Plan > Editar > "Semana en la que estás". El informe agrupa series por músculo por semana de calendario, y eso confundió al entrenador IA el 25/10; se propuso aclararlo en las reglas del entrenador y en el encabezado del informe y Eliel dijo "dejalo así" (no se hizo).
+- AJUSTES DEL ENTRENADOR (bloque AJUSTE, desde el 19/09; arreglado el 13/11): en Rutina > "Pegar ajustes sugeridos" se pega "AJUSTE: nombre | peso X". El peso queda marcado como puesto por el entrenador: la próxima sesión lo precarga tal cual, con las reps del rango de la rutina vigente (no las del bloque anterior), con calentamiento y aproximación sobre el peso nuevo y sin sumar progresión encima. Una vez entrenado, la progresión vuelve a funcionar normal.
+- CALENTAMIENTO Y APROXIMACIÓN (25/10): al empezar, copian lo de la última vez en ese día (o 50%/75% del peso base si no hay). Siguen solos al peso de la primera serie efectiva (Normal) cuando se cambia en la sesión y cuando la app sugiere subir el peso: 50% y 75%, redondeado al paso del equipo (pasoDe). Las cambiadas a mano (s.aMano) y las ya hechas no se tocan. El botón "Recalcular calentamiento/aproximación" en Más (sesión > ejercicio > Más; solo aparece si el ejercicio tiene esas series) recalcula todas las pendientes, también las cambiadas a mano.
+- Rutina propia: lector flexible de texto libre ("Press banca 3x10", encabezados "Lunes", "Día 1 - Pecho") con pantalla "Esto entendí"; armar a mano, "Agregar día" y "Eliminar este día"; "convertir con una IA": el mensaje que se copia lleva adentro los nombres de todos los ejercicios de la app (y los propios) para que la IA adapte la rutina a la biblioteca, la devuelva en el formato y avise qué cambió.
+- RUTINAS ARMADAS: "Elegir una rutina armada" en la pantalla sin rutina y en "Cargar rutina nueva". Se elige objetivo y lugar, se ve cómo queda y se usa. Son 18: músculo (gimnasio 3, 4, 5 y 6 días; casa con mancuernas 3 y 4), fuerza (gimnasio 3 y 4), bajar de peso (gimnasio 3 y 4 con aeróbico; casa 3 y sin equipo 3, en circuitos), salud (gimnasio, casa y sin equipo, cada una en 2 o 3 días). Cada una en variante A y B. Plan por bloques opcional en músculo (Hipertrofia 4, Fuerza 3, Descarga 1) y fuerza (Base 4, Fuerza 4, Descarga 1): al cambiar de bloque, Inicio ofrece "Cargar la rutina de este bloque"; al terminar el plan, repetir con la otra variante o elegir otra. En Rutina > Aparte hay tres sugeridas para sumar con un toque (Aeróbico, Abdominales, Agarre y postura).
+  Límites reales: no hay rutina de movilidad (la biblioteca no tiene ejercicios de movilidad); "sin equipo" casi no trabaja espalda; cargar el bloque siguiente pisa los cambios de ejercicios que haya hecho el usuario (avisa antes). Las rutinas las escribió Claude con criterio general de entrenamiento: no las revisó un profesional.
+- CORREGIR UNA SESIÓN FINALIZADA (09/10): botón "Corregir algo que anoté mal" en el resumen al finalizar y "Corregir" en el detalle de cada sesión del historial. Se puede cambiar peso/reps/segundos/metros y el tipo de cada serie, borrar series (un ejercicio sin series sale de la sesión) y los datos del aeróbico. Al guardar se recalculan: volumen y comparación de esa sesión; si es la última vez de ese ejercicio en ese día, lo que se precarga la próxima vez; si es la última vez en todo el historial, el peso de referencia; el récord del ejercicio y la marca de récord de esa sesión. Guarda en Drive. Se eligió corregir y no reabrir la sesión. Fuera de alcance por ahora: agregar a una sesión pasada un ejercicio o una serie olvidados.
+- Rutinas aparte (reemplazaron al "turno tarde"): "APARTE: nombre" ("TARDE:" se sigue aceptando) o armadas a mano.
+- Un solo criterio para todos los ejercicios según cómo se miden. Sueltos: Cardio, Agarre, Abdominales + "Otro ejercicio".
+- Informe para el entrenador con sección "=== RUTINAS APARTE ===".
+- Kit del entrenador (pantalla "Tu entrenador"): PASO 1 elegir IA; PASO 2 los dos archivos (descarga, o aviso de que ya están en Drive); pasos de esa IA con su botón; "MÁS ADELANTE". Claude = Proyecto, Gemini = Gem, ChatGPT = Proyecto. Simulado con agentes; regla de dolor por zona del cuerpo (deja afuera toda la zona lastimada hasta el visto bueno de un profesional).
+- Bienvenida (app sin rutina y primera vez): "Entrá con tu cuenta de Google" / "Seguir sin Google". Si en Drive ya hay una copia, ofrece recuperarla; si no, abre el kit.
+- GOOGLE DRIVE:
+  - Permiso drive.file (la app solo ve los archivos que ella crea). Carpeta "Entreno" con Rutinas, Informes y Copia de seguridad; en la raíz, los tres archivos del entrenador (se vuelven a subir solos si cambian).
+  - Copia de seguridad: copia-actual.json (se reemplaza siempre; incluye la sesión en curso), fotos-y-audios.json (solo si hay y cambió) y copia-semana-AAAA-MM-DD.json (la primera de cada semana; se conservan 4). Tope: 6 archivos.
+  - Rutinas: rutina-actual.txt; la que se reemplaza queda como rutina-hasta-AAAA-MM-DD.txt (se acumulan sin tope: decisión de Eliel). Informes: informe-actual.txt (e informe-bloque-NOMBRE.txt cuando se cierra un bloque).
+  - Cuándo guarda: al terminar cada ejercicio (última serie Hecha, última vuelta de un circuito, aeróbico hecho); al finalizar la sesión; al corregir una sesión; al cargar o guardar una rutina (principal o aparte); al copiar el informe; "Guardar ahora en Drive" en Ajustes.
+  - Al terminar un ejercicio nunca abre la ventana de Google: si hiciera falta o no hay señal, queda pendiente y se guarda en el siguiente. Un guardado pedido mientras otro está en curso se repite al terminar (drive.enCola).
+  - Una copia en Drive que no subió este celular no se pisa: aviso y pantalla "Copias en Google Drive". Una app vacía no sube copia. Al restaurar, la app abre en Inicio.
+- INGRESO CON PERMISO DURADERO (hecho el 07/10):
+  - La ventana de Google aparece solo la primera vez en cada celular (o si Google da de baja el permiso). Después el acceso se renueva solo.
+  - CONFIRMADO por Eliel el 18/11 en su celular: Drive funciona y no aparece la ventana de Google.
+  - Intermediario: Cloudflare Worker "entreno-acceso" en la cuenta de Eliel (la dirección está en DRIVE_INTERMEDIARIO de index.html). Sin estado: recibe {code} o {refresh_token}, agrega la clave secreta y le pregunta a Google; no guarda nada. Solo atiende pedidos con origen https://elielsalis-pixel.github.io. La clave secreta está cargada como secreto del Worker (GOOGLE_CLIENT_SECRET) y nunca estuvo en el repo.
+  - Para cambiar el Worker: editar herramientas/intermediario/worker.mjs, correr las pruebas y pegarlo en Cloudflare > entreno-acceso > Edit code > Deploy. No hay conector de Cloudflare que despliegue (el que había solo lee y figura obsoleto).
+  - En la app: DRIVE_INTERMEDIARIO, pedirAlIntermediario(), adaptador con accesoSinVentana(), pedirAcceso(conVentana) y soltarPermiso(). El permiso duradero se guarda en localStorage 'entrenoDrive'.permiso (no viaja en las copias). "Desconectar de este celular" lo da de baja en Google.
+  - Si el intermediario no responde: queda pendiente con aviso en Inicio y se conserva el permiso. Si Google dio de baja el permiso: aviso "Google pide que vuelvas a entrar" y un toque abre la ventana.
+- Copia con Firebase (proyecto entreno-9f842, solo la cuenta de Eliel): ya no se le ofrece a nadie que no la tuviera activada; en el celular de Eliel sigue andando en paralelo. El código sigue en index.html (sección de la nube, localStorage 'entrenoNube') y se borra cuando Eliel lo apruebe (ver PRÓXIMO PASO).
+
+DATOS QUE GUARDA
+- En el celular de cada usuario (localStorage): 'entrenoState' (rutina, historial, pesos, ajustes), 'entrenoDrive' (ajustes de Drive y permiso duradero), 'entrenoNube' (ajustes de Firebase, solo Eliel), 'entrenoState_antes_de_aparte' (copia previa a la migración a rutinas aparte) y 'entrenoState_danado_*' (si el estado se daña, se guarda aparte). Fotos y audios propios: IndexedDB 'entrenoMedia'.
+- En el Drive de cada usuario: carpeta "Entreno" (ver GOOGLE DRIVE). Solo ese usuario y la app, con permiso drive.file, lo pueden leer.
+- En Firebase (Firestore, usuarios/{uid}/datos): solo la copia de Eliel. NO VERIFICADO quién puede leerla: depende de las reglas de la base, que no se ven desde el repo.
+- En el Worker de Cloudflare: nada (sin estado).
+- Datos de terceros: ninguno. Cada usuario guarda lo suyo en su propio Drive.
+- El repo es público: no hay datos personales, claves ni datos del banco. Los correos que aparecen en tests/ son de mentira.
+
+SERVICIOS Y DEPENDENCIAS
+- Google Drive (API de Drive, permiso drive.file).
+- Cloudflare Worker "entreno-acceso" (cuenta de Eliel).
+- Firebase, proyecto entreno-9f842 (en retiro). La configuración pública del proyecto está en index.html; lo que protege los datos son las reglas de la base, no esa configuración.
+- Google Cloud: proyecto entreno-9f842 (el de Firebase). API de Drive habilitada. Pantalla de consentimiento "En producción", usuarios externos; drive.file no es un permiso sensible, así que la verificación no es obligatoria. Cliente OAuth "Entreno Web" (aplicación web), origen https://elielsalis-pixel.github.io, sin URIs de redireccionamiento; su ID de cliente es público y está en DRIVE_CLIENT_ID de index.html. El cliente que creó Firebase no se tocó.
+- Librerías externas: solo el SDK de Firebase (se va con Firebase). Datos de ejercicios: free-exercise-db e ilustraciones de Everkinetic (ver CREDITOS.md).
+
+PRUEBAS
+- Se corren con: bash tests/verificar.sh (chequea la sintaxis del JS real de index.html, corre las 12 del intermediario y las 343 de la app).
+- Última corrida: 2026-11-18, todas pasan (343/343 y 12/12).
+- Si cambia un formato que lee la app, hay que cambiar también entrenador.js (las pruebas avisan).
+
+DATOS INTERNOS (para quien programe)
+- state.rutinasAparte / state.historyAparte (aparte = id de la rutina o 'suelto'). Migración automática (migrarTurnoTarde). Versión anterior a las rutinas aparte: 5900b92.
+- Semana del plan: state.semana, avanza en avanzarSlot() al completar una vuelta (slot % días === 0).
+- Calentamiento/aproximación: PORCENTAJE_PREVIA, pesoDePrevia(), ajustarPrevias(ej, forzar); se llama desde seedSets (peso sugerido), stepperCell (cambio del peso de la primera Normal) y el botón de Más.
+- AJUSTE: aplicarAjustes(texto) marca lastByExercise[nombre].ajustado y las series guardadas; seedSets lo lee para precargar el peso sin progresión.
+- Rutinas armadas: rutinas.js tiene PUESTOS_BASE, RUTINAS_BASE (renglones "puesto tipo series reps descanso"; ~ usa el ejercicio de la otra variante), RUTINAS_BASE_DOS_DIAS, PLANES_BASE y APARTE_BASE. textoRutinaBase(elección) arma el texto en el formato de la app y entra por parseRoutine. state.base = {id, variante, dias, bloque} (null si la rutina es propia). bloquePendienteBase() decide el aviso de Inicio.
+- Versión anterior al ingreso con permiso duradero (método sin servidor, ventana cada hora): fb59f53.
+- Sesiones: finalizarSesion() y la corrección (abrirCorreccion, screenCorregir, guardarCorreccion, recalcularDerivados) comparten seriesParaRecordar(), recordarPeso(), volumenDe() y comparacionConPrevia().
+- Drive: ajustes en localStorage 'entrenoDrive' {raiz, rutinas, informes, copia, cuenta, permiso, kit, kitSubido, rutinaSubida, copiaSubida, estadoSubido, mediaSubida, semanaSubida, pendiente, ultima}. sincronizarDrive(conToque, {armar, informe}) sube lo que cambió. El guardado por ejercicio sale de mostrarCierre(). drive.adaptador permite reemplazar a Google; las pruebas usan un Google y un intermediario de mentira contra el código real.
+- Lector flexible: traducirRutinaLibre(texto) -> {texto en formato de la app, noLeidas}; después pasa por parseRoutine.
+
+DECISIONES DE ELIEL (con el porqué)
+- Versión pública: abrir la app a cualquiera; público: solo Argentina por ahora.
+- Almacenamiento: el Drive de cada usuario; la app es la única que carga y actualiza. Así no se guardan datos de nadie en servidores propios.
+- Eliel también pasa a Drive y se retira Firebase, una vez confirmado Drive en su celular.
+- Rutinas estándar: hechas (ver RUTINAS ARMADAS). Sin "énfasis" por zona. Son plantillas, no plan personalizado.
+- Rutinas archivadas en Drive: sin tope.
+- Semanas del plan: dejar como está, sin aclararlo en el kit del entrenador (25/10: "dejalo así").
+- Corregir una sesión ya finalizada, en vez de reabrirla (09/10).
+- 2026-11-18: Drive funciona en su celular sin ventana de Google.
+
+VENCIMIENTOS
+- Ninguno verificado. La pantalla de consentimiento de Google está "En producción" (sin vencimiento conocido).
+- NO VERIFICADO: si las reglas de Firestore del proyecto de Firebase tienen fecha de vencimiento (se ven solo en la consola de Firebase). Se vuelve irrelevante cuando se retire Firebase.
+
+PRÓXIMO PASO
+- Borrar el código de Firebase de index.html (y su SDK), con plan y pruebas, cuando Eliel lo apruebe. Antes de borrar: confirmar que la copia en Drive de su celular está al día y que en su celular no queda nada que solo exista en Firebase.
+
+PENDIENTES (ideas nuevas: no se ejecutan hasta que la versión actual tenga un resultado real)
+- Abrir la app al público (solo Argentina), una vez retirado Firebase y revisadas las rutinas armadas.
+
+A CONFIRMAR
+- Con una sesión real: el guardado al terminar cada ejercicio y al finalizar la sesión (Eliel confirmó el acceso sin ventana el 18/11, no estos dos), "Corregir" y el calentamiento automático.
+- Que las descargas .txt del kit funcionen en el celular (probado solo en navegador simulado).
+- Si "Seguir sin Google" en la bienvenida se queda (lo agregó Claude; Eliel preguntó qué pasa si alguien lo elige y no pidió sacarlo).
+- El lector flexible se probó con rutinas inventadas; falta probarlo con rutinas reales.
+- Que alguien que sepa de entrenamiento mire las rutinas armadas antes de abrir la app al público.
+- Si Eliel quiere inhabilitar la clave secreta vieja del cliente de Google (la primera, sin uso; la que usa el Worker es la segunda).
+- Si quiere poder agregar ejercicios o series olvidados a una sesión pasada.
+- Reglas de Firestore: quién puede leer la copia de Eliel y si vencen (ver VENCIMIENTOS).
