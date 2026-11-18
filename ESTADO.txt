@@ -1,21 +1,21 @@
-ESTADO: ENTRENO (actualizado 2026-11-18)
+ESTADO: ENTRENO (actualizado 2026-11-18, con Firebase retirada)
 Para retomar en un chat nuevo sin releer la conversación anterior.
 Texto plano, en español. Este repo es PUBLICO: aquí nunca van claves, datos personales ni nada del banco.
-Contrastado con el repo el 2026-11-18 (último commit 0ebfb2f del 13/11; 343 pruebas de la app + 12 del intermediario, todas pasan).
+Contrastado con el repo el 2026-11-18. Ese día se retiró el código de Firebase (cambio sobre el commit 0ebfb2f del 13/11); 325 pruebas de la app + 12 del intermediario, todas pasan.
 
 DÓNDE ESTÁ
 - Repo: elielsalis-pixel/app-entrenamiento (público).
-- Rama publicada: main. Rama de trabajo: biblioteca-en-pruebas. Las dos iguales en 0ebfb2f al 18/11 (antes de este archivo).
-- Hosting y URL: GitHub Pages desde main, https://elielsalis-pixel.github.io/app-entrenamiento/ (sirve el sw.js entreno-v12, igual que main).
+- Rama publicada: main. Rama de trabajo: biblioteca-en-pruebas. Se mantienen iguales después de cada merge.
+- Hosting y URL: GitHub Pages desde main, https://elielsalis-pixel.github.io/app-entrenamiento/ (el sw.js sube a entreno-v13 con la retirada de Firebase).
 - Archivos principales:
   - index.html: toda la app.
   - entrenador.js: textos del kit del entrenador (PROMPT_ENTRENADOR, REGLAS_ENTRENADOR, GUIAS_IA, MENSAJE_INICIO, MENSAJE_INFORME, MENSAJE_CONVERTIR).
   - rutinas.js: catálogo de rutinas armadas.
   - biblioteca.js: biblioteca de ejercicios, GENERADO, no editar a mano (herramientas/biblioteca/).
-  - sw.js: service worker; hay que subir el número de CACHE cuando cambian los archivos de la lista FILES.
+  - sw.js: service worker (CACHE entreno-v13); hay que subir el número de CACHE cuando cambian los archivos de la lista FILES.
   - ejercicios/: fotos e ilustraciones. CREDITOS.md: atribuciones (mantenerlo al compartir la app).
   - herramientas/intermediario/worker.mjs: código del Worker de Cloudflare.
-  - tests/app.test.js (343 pruebas), tests/intermediario.test.mjs (12), tests/verificar.sh (corre todo).
+  - tests/app.test.js (325 pruebas), tests/intermediario.test.mjs (12), tests/verificar.sh (corre todo).
 - Todo el código sigue la skill desarrollo-limpio. Plan primero, esperar aprobación, no inventar datos.
 
 QUÉ TIENE HOY
@@ -47,12 +47,12 @@ QUÉ TIENE HOY
   - Para cambiar el Worker: editar herramientas/intermediario/worker.mjs, correr las pruebas y pegarlo en Cloudflare > entreno-acceso > Edit code > Deploy. No hay conector de Cloudflare que despliegue (el que había solo lee y figura obsoleto).
   - En la app: DRIVE_INTERMEDIARIO, pedirAlIntermediario(), adaptador con accesoSinVentana(), pedirAcceso(conVentana) y soltarPermiso(). El permiso duradero se guarda en localStorage 'entrenoDrive'.permiso (no viaja en las copias). "Desconectar de este celular" lo da de baja en Google.
   - Si el intermediario no responde: queda pendiente con aviso en Inicio y se conserva el permiso. Si Google dio de baja el permiso: aviso "Google pide que vuelvas a entrar" y un toque abre la ventana.
-- Copia con Firebase (proyecto entreno-9f842, solo la cuenta de Eliel): ya no se le ofrece a nadie que no la tuviera activada; en el celular de Eliel sigue andando en paralelo. El código sigue en index.html (sección de la nube, localStorage 'entrenoNube') y se borra cuando Eliel lo apruebe (ver PRÓXIMO PASO).
+- Copia con Firebase: RETIRADA el 18/11. Se borró todo su código de index.html y del service worker (el SDK, la pantalla "Copias en la nube", el bloque de Ajustes, el aviso de Inicio y el botón de recuperar). Al abrir, la app borra el resto viejo del celular (localStorage 'entrenoNube'). El aviso de "hace X días sin copia" y el texto de la copia manual ahora miran el último guardado de Google Drive (menos de 3 días = al día). Quedaron en index.html las ayudas compartidas con Drive (appVacia, firmaMedia, claveSemana, fechaHoraCorta, redibujarSiNoInterrumpe, COPIAS_SEMANALES), en la sección "ayudas compartidas".
 
 DATOS QUE GUARDA
-- En el celular de cada usuario (localStorage): 'entrenoState' (rutina, historial, pesos, ajustes), 'entrenoDrive' (ajustes de Drive y permiso duradero), 'entrenoNube' (ajustes de Firebase, solo Eliel), 'entrenoState_antes_de_aparte' (copia previa a la migración a rutinas aparte) y 'entrenoState_danado_*' (si el estado se daña, se guarda aparte). Fotos y audios propios: IndexedDB 'entrenoMedia'.
+- En el celular de cada usuario (localStorage): 'entrenoState' (rutina, historial, pesos, ajustes), 'entrenoDrive' (ajustes de Drive y permiso duradero), 'entrenoState_antes_de_aparte' (copia previa a la migración a rutinas aparte) y 'entrenoState_danado_*' (si el estado se daña, se guarda aparte). Fotos y audios propios: IndexedDB 'entrenoMedia'.
 - En el Drive de cada usuario: carpeta "Entreno" (ver GOOGLE DRIVE). Solo ese usuario y la app, con permiso drive.file, lo pueden leer.
-- En Firebase (Firestore, usuarios/{uid}/datos): solo la copia de Eliel. NO VERIFICADO quién puede leerla: depende de las reglas de la base, que no se ven desde el repo.
+- En Firebase (Firestore, usuarios/{uid}/datos): la app ya no lee ni escribe ahí. Puede quedar la copia vieja de Eliel en la consola de Firebase. NO VERIFICADO quién puede leerla: depende de las reglas de la base, que no se ven desde el repo.
 - En el Worker de Cloudflare: nada (sin estado).
 - Datos de terceros: ninguno. Cada usuario guarda lo suyo en su propio Drive.
 - El repo es público: no hay datos personales, claves ni datos del banco. Los correos que aparecen en tests/ son de mentira.
@@ -60,13 +60,13 @@ DATOS QUE GUARDA
 SERVICIOS Y DEPENDENCIAS
 - Google Drive (API de Drive, permiso drive.file).
 - Cloudflare Worker "entreno-acceso" (cuenta de Eliel).
-- Firebase, proyecto entreno-9f842 (en retiro). La configuración pública del proyecto está en index.html; lo que protege los datos son las reglas de la base, no esa configuración.
+- Firebase: ya no lo usa el código. NO borrar el proyecto entreno-9f842 de Firebase/Google Cloud: es el mismo proyecto donde vive el cliente de Google que usa Drive.
 - Google Cloud: proyecto entreno-9f842 (el de Firebase). API de Drive habilitada. Pantalla de consentimiento "En producción", usuarios externos; drive.file no es un permiso sensible, así que la verificación no es obligatoria. Cliente OAuth "Entreno Web" (aplicación web), origen https://elielsalis-pixel.github.io, sin URIs de redireccionamiento; su ID de cliente es público y está en DRIVE_CLIENT_ID de index.html. El cliente que creó Firebase no se tocó.
-- Librerías externas: solo el SDK de Firebase (se va con Firebase). Datos de ejercicios: free-exercise-db e ilustraciones de Everkinetic (ver CREDITOS.md).
+- Librerías externas: ninguna. Datos de ejercicios: free-exercise-db e ilustraciones de Everkinetic (ver CREDITOS.md).
 
 PRUEBAS
-- Se corren con: bash tests/verificar.sh (chequea la sintaxis del JS real de index.html, corre las 12 del intermediario y las 343 de la app).
-- Última corrida: 2026-11-18, todas pasan (343/343 y 12/12).
+- Se corren con: bash tests/verificar.sh (chequea la sintaxis del JS real de index.html, corre las 12 del intermediario y las 325 de la app).
+- Última corrida: 2026-11-18, todas pasan (325/325 y 12/12). Bajó de 343 a 325: se sacaron las pruebas de la copia con Firebase y se sumaron 8 que cubren su retiro y el aviso por Drive.
 - Si cambia un formato que lee la app, hay que cambiar también entrenador.js (las pruebas avisan).
 
 DATOS INTERNOS (para quien programe)
@@ -88,17 +88,17 @@ DECISIONES DE ELIEL (con el porqué)
 - Rutinas archivadas en Drive: sin tope.
 - Semanas del plan: dejar como está, sin aclararlo en el kit del entrenador (25/10: "dejalo así").
 - Corregir una sesión ya finalizada, en vez de reabrirla (09/10).
-- 2026-11-18: Drive funciona en su celular siempre sin ventana de Google.
+- 2026-11-18: Drive funciona en su celular siempre sin ventana de Google. Con eso se retira Firebase; el respaldo pasa a ser solo Drive (Eliel aceptó perder la restauración desde Firebase; en su Drive la copia-actual.json estaba guardada el 17/11 y las semanales hasta el 16/11).
 
 VENCIMIENTOS
 - Ninguno verificado. La pantalla de consentimiento de Google está "En producción" (sin vencimiento conocido).
-- NO VERIFICADO: si las reglas de Firestore del proyecto de Firebase tienen fecha de vencimiento (se ven solo en la consola de Firebase). Se vuelve irrelevante cuando se retire Firebase.
+- NO VERIFICADO: las reglas de Firestore (solo se ven en la consola de Firebase) y si vencen. Ya no afectan a la app. Eliel dice que la copia vieja no tiene información sensible; cerrar las reglas es opcional y lo hace él en la consola (un asistente no cambia ajustes de seguridad).
 
 PRÓXIMO PASO
-- Borrar el código de Firebase de index.html (y su SDK), con plan y pruebas, cuando Eliel lo apruebe. Antes de borrar: confirmar que la copia en Drive de su celular está al día y que en su celular no queda nada que solo exista en Firebase.
+- Probar en el celular de Eliel la versión sin Firebase con una sesión real: que guarde en Drive al terminar cada ejercicio y al finalizar, que "Corregir" y el calentamiento automático anden, y que Ajustes diga que los datos se guardan solos en Google Drive.
 
 PENDIENTES (ideas nuevas: no se ejecutan hasta que la versión actual tenga un resultado real)
-- Abrir la app al público (solo Argentina), una vez retirado Firebase y revisadas las rutinas armadas.
+- Abrir la app al público (solo Argentina), una vez revisadas las rutinas armadas por alguien que sepa de entrenamiento.
 
 A CONFIRMAR
 - Con una sesión real: el guardado al terminar cada ejercicio y al finalizar la sesión (Eliel confirmó el acceso sin ventana el 18/11, no estos dos), "Corregir" y el calentamiento automático.
@@ -108,4 +108,4 @@ A CONFIRMAR
 - Que alguien que sepa de entrenamiento mire las rutinas armadas antes de abrir la app al público.
 - Si Eliel quiere inhabilitar la clave secreta vieja del cliente de Google (la primera, sin uso; la que usa el Worker es la segunda).
 - Si quiere poder agregar ejercicios o series olvidados a una sesión pasada.
-- Reglas de Firestore: quién puede leer la copia de Eliel y si vencen (ver VENCIMIENTOS).
+- Si Eliel quiere cerrar las reglas de Firestore en la consola (ver VENCIMIENTOS).

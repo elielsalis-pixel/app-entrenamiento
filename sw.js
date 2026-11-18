@@ -1,4 +1,4 @@
-const CACHE = 'entreno-v12';
+const CACHE = 'entreno-v13';
 const FILES = ['index.html', 'manifest.json', 'icon.svg', 'biblioteca.js', 'entrenador.js', 'rutinas.js'];
 
 self.addEventListener('install', e=>{
@@ -16,8 +16,8 @@ self.addEventListener('activate', e=>{
 self.addEventListener('fetch', e=>{
   if(e.request.method !== 'GET') return;
   const url = e.request.url;
-  // lo de otros sitios (la base en la nube, el ingreso con Google) va directo a la red; solo se guarda el SDK de Firebase
-  if(!url.startsWith(self.location.origin) && !url.includes('gstatic.com/firebasejs/')) return;
+  // lo de otros sitios (Google Drive, el ingreso con Google) va directo a la red; solo se guarda lo propio de la app
+  if(!url.startsWith(self.location.origin)) return;
   const esCodigo = url.endsWith('.html') || url.endsWith('.js') || url.endsWith('.json') || e.request.mode === 'navigate';
   if(esCodigo){
     // red primero: siempre la versión más nueva; sin internet, la guardada
