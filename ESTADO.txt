@@ -95,7 +95,7 @@ VENCIMIENTOS
 - NO VERIFICADO: las reglas de Firestore (solo se ven en la consola de Firebase) y si vencen. Ya no afectan a la app. Eliel dice que la copia vieja no tiene información sensible; cerrar las reglas es opcional y lo hace él en la consola (un asistente no cambia ajustes de seguridad).
 
 PRÓXIMO PASO
-- Probar en el celular de Eliel la versión sin Firebase con una sesión real: que guarde en Drive al terminar cada ejercicio y al finalizar, que "Corregir" y el calentamiento automático anden, y que Ajustes diga que los datos se guardan solos en Google Drive.
+- Probar en el gym, con una sesión real, la versión sin Firebase (v13): que guarde en Drive al terminar cada ejercicio y al finalizar, y que "Corregir" y el calentamiento automático anden. Ya confirmado por Eliel el 18/11: la v13 se instala y en Ajustes desapareció la nube (queda solo Google Drive).
 
 PENDIENTES (ideas nuevas: no se ejecutan hasta que la versión actual tenga un resultado real)
 - Abrir la app al público (solo Argentina), una vez revisadas las rutinas armadas por alguien que sepa de entrenamiento.
